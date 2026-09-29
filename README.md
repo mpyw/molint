@@ -58,13 +58,13 @@ go vet -vettool=$(which molint) ./...        # through go vet, with its cache
 
 | Rule | Default | Reports |
 | --- | --- | --- |
-| [`return-nil`](#return-nil) | On | A nil pointer result |
-| [`return-bool`](#return-bool) | On | A signature that ends in a `bool` after other results |
-| [`return-error`](#return-error) | **Off** | A signature that ends in an `error` after other results |
-| [`wrap-nil`](#wrap-nil) | On | nil given to `mo.Some`, `mo.Ok`, or `mo.Err` |
-| [`result-zero`](#result-zero) | On | A zero `mo.Result` |
-| [`unwrap-nil`](#unwrap-nil) | On | `OrEmpty`, or `OrElse(nil)`, on an Option or a Result of a pointer |
-| [`unwrap-discard`](#unwrap-discard) | On | `Get` with its `ok` or its error discarded |
+| [`return-nil`](#return-nil) | 🟢 On | A nil pointer result |
+| [`return-bool`](#return-bool) | 🟢 On | A signature that ends in a `bool` after other results |
+| [`return-error`](#return-error) | 🔴 Off | A signature that ends in an `error` after other results |
+| [`wrap-nil`](#wrap-nil) | 🟢 On | nil given to `mo.Some`, `mo.Ok`, or `mo.Err` |
+| [`result-zero`](#result-zero) | 🟢 On | A zero `mo.Result` |
+| [`unwrap-nil`](#unwrap-nil) | 🟢 On | `OrEmpty`, or `OrElse(nil)`, on an Option or a Result of a pointer |
+| [`unwrap-discard`](#unwrap-discard) | 🟢 On | `Get` with its `ok` or its error discarded |
 
 The line between them: absence must not be dropped silently. A trailing `bool` and a discarded `ok` drop it silently, whatever the type. `OrEmpty` and `OrElse` choose a default in plain sight. That is fine, unless the default is nil.
 
