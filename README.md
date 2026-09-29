@@ -1,6 +1,6 @@
 # molint
 
-Go linter that enforces [samber/mo](https://github.com/samber/mo): absence is `mo.Option`, not a nil pointer or a trailing `bool`.
+Go linter that enforces [samber/mo](https://github.com/samber/mo): absence is [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option), not a nil pointer or a trailing `bool`.
 
 > [!WARNING]
 > Work in progress. The rules are strict on purpose. They are meant for applications that choose [samber/mo](https://github.com/samber/mo), not for libraries.
@@ -40,7 +40,7 @@ molint reads the shape of signatures, and follows values only inside one functio
 | Tool | Job | Reads |
 | --- | --- | --- |
 | [uber-go/nilaway](https://github.com/uber-go/nilaway) | Finds possible nil panics | The flow of values across functions |
-| molint | Enforces the use of `mo.Option` and `mo.Result` | The shape of signatures and code |
+| molint | Enforces the use of [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) and [`mo.Result`](https://pkg.go.dev/github.com/samber/mo#Result) | The shape of signatures and code |
 
 ## Install
 
@@ -61,12 +61,12 @@ go vet -vettool=$(which molint) ./...        # through go vet, with its cache
 | [`return-nil`](#return-nil) | 🟢 On | A nil pointer result |
 | [`return-bool`](#return-bool) | 🟢 On | A signature that ends in a `bool` after other results |
 | [`return-error`](#return-error) | 🔴 Off | A signature that ends in an `error` after other results |
-| [`wrap-nil`](#wrap-nil) | 🟢 On | nil given to `mo.Some`, `mo.Ok`, or `mo.Err` |
-| [`result-zero`](#result-zero) | 🟢 On | A zero `mo.Result` |
-| [`unwrap-nil`](#unwrap-nil) | 🟢 On | `OrEmpty`, or `OrElse(nil)`, where the nil breaks on use:<br>pointer, interface, `map`, `func` or `chan` |
-| [`unwrap-discard`](#unwrap-discard) | 🟢 On | `Get` with its `ok` or its error discarded |
+| [`wrap-nil`](#wrap-nil) | 🟢 On | nil given to [`mo.Some`](https://pkg.go.dev/github.com/samber/mo#Some), [`mo.Ok`](https://pkg.go.dev/github.com/samber/mo#Ok), or [`mo.Err`](https://pkg.go.dev/github.com/samber/mo#Err) |
+| [`result-zero`](#result-zero) | 🟢 On | A zero [`mo.Result`](https://pkg.go.dev/github.com/samber/mo#Result) |
+| [`unwrap-nil`](#unwrap-nil) | 🟢 On | [`OrEmpty`](https://pkg.go.dev/github.com/samber/mo#Option.OrEmpty), or [`OrElse(nil)`](https://pkg.go.dev/github.com/samber/mo#Option.OrElse), where the nil breaks on use:<br>pointer, interface, `map`, `func` or `chan` |
+| [`unwrap-discard`](#unwrap-discard) | 🟢 On | [`Get`](https://pkg.go.dev/github.com/samber/mo#Option.Get) with its `ok` or its error discarded |
 
-The line between them: absence must not be dropped silently. A trailing `bool` and a discarded `ok` drop it silently, whatever the type. `OrEmpty` and `OrElse` choose a default in plain sight. That is fine, unless the default is nil.
+The line between them: absence must not be dropped silently. A trailing `bool` and a discarded `ok` drop it silently, whatever the type. [`OrEmpty`](https://pkg.go.dev/github.com/samber/mo#Option.OrEmpty) and [`OrElse`](https://pkg.go.dev/github.com/samber/mo#Option.OrElse) choose a default in plain sight. That is fine, unless the default is nil.
 
 Each rule has a flag of its name:
 
@@ -287,7 +287,7 @@ func Find() mo.Option[User]
 func Cut() mo.Option[lo.Tuple2[string, string]]
 ```
 
-For several values, use a struct, or a tuple of [samber/lo](https://github.com/samber/lo) such as `lo.Tuple2`.
+For several values, use a struct, or a tuple of [samber/lo](https://github.com/samber/lo) such as [`lo.Tuple2`](https://pkg.go.dev/github.com/samber/lo#Tuple2).
 
 > [!NOTE]
 > A method is exempt only when molint sees the interface. It must be declared in the package, or in a package that the package imports directly. `MarshalJSON` in a package that does not import `encoding/json` is not exempt.
@@ -404,7 +404,7 @@ mo.Some[[]int](nil)
 
 </td>
 <td>❌</td>
-<td><code>Some</code> claims that a value is present, but it holds nil. It then encodes in JSON as <code>null</code>, as <code>mo.None</code> does</td>
+<td><a href="https://pkg.go.dev/github.com/samber/mo#Some"><code>Some</code></a> claims that a value is present, but it holds nil. It then encodes in JSON as <code>null</code>, as <a href="https://pkg.go.dev/github.com/samber/mo#None"><code>mo.None</code></a> does</td>
 </tr>
 <tr>
 <td>
@@ -430,7 +430,7 @@ mo.Err[T](ErrNotFound) // a failure, with a non-nil error
 
 ### `result-zero`
 
-A zero `mo.Result` is Ok, holding the zero value of its type. It must not be used.
+A zero [`mo.Result`](https://pkg.go.dev/github.com/samber/mo#Result) is Ok, holding the zero value of its type. It must not be used.
 
 ```go
 func Load() mo.Result[Config] {
@@ -439,7 +439,7 @@ func Load() mo.Result[Config] {
 }
 ```
 
-A return, an argument, a store, a send, and a method call are uses. A comparison is not. A zero `mo.Option` is None, which is fine, so it is not reported.
+A return, an argument, a store, a send, and a method call are uses. A comparison is not. A zero [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) is None, which is fine, so it is not reported.
 
 #### Fix
 
@@ -651,15 +651,15 @@ These are not checked:
 | Case | Why |
 | --- | --- |
 | A nil from a parameter, a field, or a call | Values are followed only inside one function. [uber-go/nilaway](https://github.com/uber-go/nilaway) follows them further |
-| `mo.TupleToOption`, `mo.TupleToResult`, `mo.EmptyableToOption` | They check their arguments at run time |
-| A zero `mo.Result` left out of a composite literal, as in `Holder{}` | Fields are not followed |
+| [`mo.TupleToOption`](https://pkg.go.dev/github.com/samber/mo#TupleToOption), [`mo.TupleToResult`](https://pkg.go.dev/github.com/samber/mo#TupleToResult), [`mo.EmptyableToOption`](https://pkg.go.dev/github.com/samber/mo#EmptyableToOption) | They check their arguments at run time |
+| A zero [`mo.Result`](https://pkg.go.dev/github.com/samber/mo#Result) left out of a composite literal, as in `Holder{}` | Fields are not followed |
 | A constructor or method of mo passed as a function value | Calls through function values are not followed |
 
 These are reported although no run returns nil, since branches are taken as independent:
 
 | Case | Instead |
 | --- | --- |
-| `if c { p = x }; if c { return p }` | Keep the value and its condition together, as in `mo.Option` |
+| `if c { p = x }; if c { return p }` | Keep the value and its condition together, as in [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) |
 | The pointer and the error set on separate branches, then `if err != nil { return nil, err }; return u, nil` | Return from each branch |
 | A retry loop that ends with `return nil, err` | Start the error at a sentinel, so that no round leaves it nil |
 
