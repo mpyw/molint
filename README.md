@@ -58,13 +58,13 @@ go vet -vettool=$(which molint) ./...        # through go vet, with its cache
 
 | Rule | Default | Reports |
 | --- | --- | --- |
-| [`return-nil`](#return-nil) | 🟢 On | A nil pointer result |
-| [`return-bool`](#return-bool) | 🟢 On | A signature that ends in a `bool` after other results |
-| [`return-error`](#return-error) | 🔴 Off | A signature that ends in an `error` after other results |
-| [`wrap-nil`](#wrap-nil) | 🟢 On | nil given to [`mo.Some`](https://pkg.go.dev/github.com/samber/mo#Some), [`mo.Ok`](https://pkg.go.dev/github.com/samber/mo#Ok), or [`mo.Err`](https://pkg.go.dev/github.com/samber/mo#Err) |
-| [`result-zero`](#result-zero) | 🟢 On | A zero [`mo.Result`](https://pkg.go.dev/github.com/samber/mo#Result) |
-| [`unwrap-nil`](#unwrap-nil) | 🟢 On | [`OrEmpty`](https://pkg.go.dev/github.com/samber/mo#Option.OrEmpty), or [`OrElse(nil)`](https://pkg.go.dev/github.com/samber/mo#Option.OrElse), where the nil breaks on use:<br>pointer, interface, `map`, `func` or `chan` |
-| [`unwrap-discard`](#unwrap-discard) | 🟢 On | [`Get`](https://pkg.go.dev/github.com/samber/mo#Option.Get) with its `ok` or its error discarded |
+| [`return-nil`](#return-nil) | 🟢 On | A nil pointer result<br>→ Use [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) instead |
+| [`return-bool`](#return-bool) | 🟢 On | A signature that ends in a `bool` after other results<br>→ Use [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) instead |
+| [`return-error`](#return-error) | 🔴 Off | A signature that ends in an `error` after other results<br>→ Use [`mo.Result`](https://pkg.go.dev/github.com/samber/mo#Result) instead |
+| [`wrap-nil`](#wrap-nil) | 🟢 On | nil given to [`mo.Some`](https://pkg.go.dev/github.com/samber/mo#Some), [`mo.Ok`](https://pkg.go.dev/github.com/samber/mo#Ok), or [`mo.Err`](https://pkg.go.dev/github.com/samber/mo#Err)<br>→ Use [`mo.None`](https://pkg.go.dev/github.com/samber/mo#None), or pass a non-nil value |
+| [`result-zero`](#result-zero) | 🟢 On | A zero [`mo.Result`](https://pkg.go.dev/github.com/samber/mo#Result)<br>→ Build it with [`mo.Ok`](https://pkg.go.dev/github.com/samber/mo#Ok) or [`mo.Err`](https://pkg.go.dev/github.com/samber/mo#Err) |
+| [`unwrap-nil`](#unwrap-nil) | 🟢 On | [`OrEmpty`](https://pkg.go.dev/github.com/samber/mo#Option.OrEmpty), or [`OrElse(nil)`](https://pkg.go.dev/github.com/samber/mo#Option.OrElse), where the nil breaks on use:<br>pointer, interface, `map`, `func` or `chan`<br>→ Use [`Get`](https://pkg.go.dev/github.com/samber/mo#Option.Get) and check `ok`, or give [`OrElse`](https://pkg.go.dev/github.com/samber/mo#Option.OrElse) a non-nil value |
+| [`unwrap-discard`](#unwrap-discard) | 🟢 On | [`Get`](https://pkg.go.dev/github.com/samber/mo#Option.Get) with its `ok` or its error discarded<br>→ Check it, or use [`OrElse`](https://pkg.go.dev/github.com/samber/mo#Option.OrElse) |
 
 The line between them: absence must not be dropped silently. A trailing `bool` and a discarded `ok` drop it silently, whatever the type. [`OrEmpty`](https://pkg.go.dev/github.com/samber/mo#Option.OrEmpty) and [`OrElse`](https://pkg.go.dev/github.com/samber/mo#Option.OrElse) choose a default in plain sight. That is fine, unless the default is nil.
 
