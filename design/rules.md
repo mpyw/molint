@@ -138,9 +138,11 @@ A nil value must not be passed to these constructors of mo:
 
 | Call | Reported when |
 | --- | --- |
-| `mo.Some[T](v)` | `T` is a pointer or an interface, and `v` is a nil value |
+| `mo.Some[T](v)` | A nil of `T` breaks on use, and `v` is a nil value |
 | `mo.Ok[T](v)` | The same |
 | `mo.Err[T](err)` | `err` is a nil value |
+
+A nil breaks on use when `T` is a pointer, an interface, a map, a func or a channel. A nil slice does not: it works as an empty one. A type parameter counts as none of these, whatever its constraint.
 
 A call counts when SSA calls the constructor statically. A constructor held in a local variable, as in `f := mo.Some[*T]; f(nil)`, lowers to a static call and is reported. One passed through a parameter or a field is not followed.
 

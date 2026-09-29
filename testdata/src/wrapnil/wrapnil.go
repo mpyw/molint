@@ -126,12 +126,34 @@ func SomeInterfaceValue() mo.Option[error] {
 	return mo.Some(errX)
 }
 
-// ----- Types that are neither pointers nor interfaces -----
+// ----- Maps, funcs, channels and slices -----
 
-// Not reported: a nil slice, map or func is not a pointer or an interface.
-func SomeSliceNil() mo.Option[[]int]     { return mo.Some[[]int](nil) }
-func SomeMapNil() mo.Option[map[int]int] { return mo.Some[map[int]int](nil) }
-func SomeFuncNil() mo.Option[func()]     { return mo.Some[func()](nil) }
+// A nil map, func or channel breaks on use: writing to the map, calling the
+// func, or using the channel.
+func SomeMapNil() mo.Option[map[int]int] {
+	return mo.Some[map[int]int](nil) // want `^mo\.Some is given nil; pass a non-nil value, or use mo\.None \[wrap-nil\]$`
+}
+
+func SomeFuncNil() mo.Option[func()] {
+	return mo.Some[func()](nil) // want `^mo\.Some is given nil; pass a non-nil value, or use mo\.None \[wrap-nil\]$`
+}
+
+func SomeChanNil() mo.Option[chan int] {
+	return mo.Some[chan int](nil) // want `^mo\.Some is given nil; pass a non-nil value, or use mo\.None \[wrap-nil\]$`
+}
+
+func SomeMapVar() mo.Option[map[string]*T] {
+	var m map[string]*T
+	return mo.Some(m) // want `^mo\.Some is given nil; pass a non-nil value, or use mo\.None \[wrap-nil\]$`
+}
+
+// Not reported: a made map is not nil.
+func SomeMapMade() mo.Option[map[int]int] {
+	return mo.Some(make(map[int]int))
+}
+
+// Not reported: a nil slice works as an empty one.
+func SomeSliceNil() mo.Option[[]int] { return mo.Some[[]int](nil) }
 
 // Not reported: a value type.
 func SomeInt() mo.Option[int] {
@@ -164,8 +186,8 @@ func SomeGenericValue[E any](v E) mo.Option[E] {
 	return mo.Some(v)
 }
 
-// Not reported: a type parameter is not a pointer or an interface, whatever
-// its constraint.
+// Not reported: a type parameter counts as none of the types a nil breaks,
+// whatever its constraint.
 func SomeGenericPointerConstraint[E ~*int]() mo.Option[E] {
 	return mo.Some[E](nil)
 }
@@ -236,9 +258,13 @@ func OkAddr() mo.Result[*T] {
 	return mo.Ok(&T{})
 }
 
-// Not reported: a nil slice is not a pointer or an interface.
+// Not reported: a nil slice works as an empty one.
 func OkSliceNil() mo.Result[[]int] {
 	return mo.Ok[[]int](nil)
+}
+
+func OkMapNil() mo.Result[map[int]int] {
+	return mo.Ok[map[int]int](nil) // want `^mo\.Ok is given nil; pass a non-nil value \[wrap-nil\]$`
 }
 
 // Not reported: a checked value on its non-nil edge.

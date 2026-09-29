@@ -25,14 +25,19 @@ func IsPointer(t types.Type) bool {
 	return ok
 }
 
-// IsPointerOrInterface reports whether t is a pointer or an interface. A
-// type parameter is neither, although go/types calls its underlying type an
-// interface.
-func IsPointerOrInterface(t types.Type) bool {
+// NilBreaks reports whether a nil of type t breaks on use: a pointer, an
+// interface, a map, a func or a channel. A nil slice does not, since it
+// works as an empty one. A type parameter counts as none of these, although
+// go/types calls its underlying type an interface.
+func NilBreaks(t types.Type) bool {
 	if _, ok := types.Unalias(t).(*types.TypeParam); ok {
 		return false
 	}
-	return IsPointer(t) || types.IsInterface(t)
+	switch t.Underlying().(type) {
+	case *types.Pointer, *types.Interface, *types.Map, *types.Signature, *types.Chan:
+		return true
+	}
+	return false
 }
 
 // Trailing is what the last result of a signature is.

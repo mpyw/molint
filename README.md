@@ -349,12 +349,23 @@ mo.Err[T](nil)
 <td>
 
 ```go
+mo.Some[map[string]int](nil)
+```
+
+</td>
+<td>❌</td>
+<td>The option is present, and writing to its map panics. The same holds for a func and a channel</td>
+</tr>
+<tr>
+<td>
+
+```go
 mo.Some[[]int](nil)
 ```
 
 </td>
 <td>✅</td>
-<td>Only pointers and interfaces count for <code>Some</code> and <code>Ok</code></td>
+<td>A nil slice works as an empty one</td>
 </tr>
 </tbody>
 </table>
