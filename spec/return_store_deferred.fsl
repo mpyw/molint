@@ -1,0 +1,71 @@
+// FAILS ON PURPOSE. It documents an accepted consequence of return-nil: a
+// return with operands is judged on the values it stores, whatever captures
+// the result variables. See "return-nil" in design/rules.md.
+//
+//   func F() (p *T) {
+//     defer func() { if p == nil { p = def } }()
+//     return nil                reported: "F returns a nil *T"
+//   }
+//
+// The return stores nil, the deferred literal replaces it with def, and the
+// caller gets def. The report stands on purpose: the return says nil.
+//
+// The program: `return V` with V nil, &T{} or f(), in a function whose
+// deferred literal keeps p, sets it non-nil, or sets it to f(). The run
+// stores V, runs the literal, and loads p as the result.
+//
+// ReportMeansANilIsReturned is the claim the other specs prove: when
+// reported, the witness run returns the nil constant. It breaks here, and
+// that is the consequence the rules accept. local_store_escape.fsl holds the
+// bare-return form, which loads p and is not followed.
+spec ReturnStoreDeferred {
+  enum Op { Nil, Alloc, Ext }
+  enum Effect { Keeps, SetsNonNil, SetsOutside }
+  enum Val { NilConst, NilExt, NonNil }
+  enum Pc { Ready, Judged, Stored, Returned }
+  type Bit = 0..3
+
+  state {
+    pc: Pc,
+    ch: Map<Bit, Bool>,
+    v: Op, eff: Effect,
+    rep: Bool, p: Val, rv: Val, follow: Bool
+  }
+
+  init {
+    pc = Ready
+    v = if ch[0] then Nil else if ch[1] then Alloc else Ext
+    eff = if ch[2] then Keeps else if ch[3] then SetsNonNil else SetsOutside
+    rep = false  p = NonNil  rv = NonNil  follow = false
+  }
+
+  // The rule as written: the stored value is judged.
+  def reported() = v == Nil
+
+  action judge() {
+    requires pc == Ready
+    pc = Judged  rep = reported()
+  }
+
+  action store(n: Bool) {
+    requires pc == Judged
+    pc = Stored
+    p = if v == Nil then NilConst else if v == Alloc then NonNil else if n then NilExt else NonNil
+    follow = rep and not n
+  }
+
+  // The deferred literal runs, then p is loaded as the result.
+  action returns(n: Bool) {
+    requires pc == Stored
+    pc = Returned
+    rv = if eff == Keeps then p else if eff == SetsNonNil then NonNil
+         else if n then NilExt else NonNil
+    follow = follow and not n
+  }
+
+  terminal { pc == Returned }
+
+  invariant ReportMeansANilIsReturned { (follow and pc == Returned) => rv == NilConst }
+
+  reachable KeptNilIsReturned { pc == Returned and follow and eff == Keeps and rv == NilConst }
+}

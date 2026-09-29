@@ -1,28 +1,41 @@
-// Package nilproof reports a returned pointer that is not proven non-nil.
+// Package molint enforces the use of github.com/samber/mo.
 //
-// A nil pointer returned where a value was expected fails far from where it
-// was made. nilproof asks every return of a pointer for a proof that it is
-// not nil. Where a value may be absent, return mo.Option from
-// github.com/samber/mo instead, so that the absence is in the type.
-package nilproof
+// Absence is mo.Option, and failure may be mo.Result, rather than a nil
+// pointer, a trailing bool, or a trailing error. An Option or a Result must
+// not hold or give a nil it should not. The rules are listed in
+// design/rules.md, and each has a flag of its name.
+package molint
 
 import (
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/buildssa"
 
-	"github.com/mpyw/nilproof/internal"
+	"github.com/mpyw/molint/internal"
+	"github.com/mpyw/molint/internal/rule"
 )
 
-// Analyzer reports a returned pointer that is not proven non-nil.
+// Analyzer enforces the use of github.com/samber/mo.
 var Analyzer = &analysis.Analyzer{
-	Name:      "nilproof",
-	Doc:       "reports a returned pointer that is not proven non-nil",
-	URL:       "https://github.com/mpyw/nilproof",
-	Requires:  []*analysis.Analyzer{buildssa.Analyzer},
-	FactTypes: []analysis.Fact{new(internal.Fact), new(internal.GlobalFact)},
-	Run:       internal.Run,
+	Name:     "molint",
+	Doc:      "enforces the use of github.com/samber/mo",
+	URL:      "https://github.com/mpyw/molint",
+	Requires: []*analysis.Analyzer{buildssa.Analyzer},
+	Run:      run,
 }
 
 // ErrNoSSA is returned when the pass carries no buildssa result, which means
 // the analyzer was registered without its requirement.
 var ErrNoSSA = internal.ErrRunWithoutSSA
+
+// on holds the flag of each rule.
+var on = make(map[rule.Name]*bool)
+
+func init() {
+	for _, r := range rule.All {
+		on[r] = Analyzer.Flags.Bool(string(r), rule.OnByDefault(r), "report "+string(r))
+	}
+}
+
+func run(pass *analysis.Pass) (any, error) {
+	return internal.Run(pass, internal.Config{On: func(r rule.Name) bool { return *on[r] }})
+}

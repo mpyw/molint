@@ -1,4 +1,4 @@
-module github.com/mpyw/nilproof
+module github.com/mpyw/molint
 
 go 1.27.0
 

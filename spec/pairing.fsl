@@ -1,0 +1,325 @@
+// When return-nil reports a nil pointer that comes with a trailing error or
+// bool, through φ-nodes. See "return-nil" in design/rules.md.
+//
+// A nil pointer with a trailing error is reported only when the error is also
+// a nil value. With a trailing bool, only when the bool is the constant true.
+// Both rules pair two results in the same way, so this spec models them once.
+// The second result, s, is one of:
+//
+//   Bad   the nil error (constant nil), or the constant true
+//   Good  a non-nil error (errors.New), or the constant false
+//   Out   a value from outside: a call's result or a parameter
+//
+// The program:
+//
+//   u, s := U0, S0                    entry: nil, &T{}, f() / Bad, Good, Out
+//   for cond() {                      loop header H: two φ-nodes
+//     if b { u, s = X0, Y0 }          body join B, two arms; each arm sets u,
+//     else { u, s = X1, Y1 }          s, both, or neither
+//   }
+//   switch {                          the return's join J, three edges
+//   case c0: [check] u, s = U0', S0'  each operand is a constant, f(), or
+//   case c1: [check] ...              FromH: what the loop left. Each edge may
+//   default: [check] ...              check its u: u == nil, or u != nil
+//   }
+//   return u, s
+//
+// The rule, from design/rules.md: a return is judged along each edge into the
+// φ-node block. When the values on an edge are φ-nodes of the same earlier
+// block, the same is done there, along one edge of that block, recursively.
+// Through H and B that is a path of rounds, and the pair read along it is the
+// last X and the last Y the path set, or U0 and S0. A value from outside is
+// not a nil value. A check on the edge settles u for the whole path: u != nil
+// stops the edge before its φ-nodes are taken apart, and u == nil makes u a
+// nil value on every path where it can be nil.
+//
+// pair() in internal/flow/pair.go does the recursion, with a set of the pairs
+// it has seen so that the loop ends. Any pair a longer path gives, a path of
+// at most two rounds gives too: the round of the last store of one result,
+// then the round of the other. So the rule below looks at those paths only.
+//
+// The run keeps its own record of each value; the rule never reads it.
+//
+// The claim. The rule reports exactly when some run returns a nil pointer that
+// is a constant's or passed a nil check, with a Bad constant:
+//
+//   ReportMeansNilWithBad   when reported, the witness run is never blocked,
+//                           and returns such a pair
+//   NilWithBadIsReported    whenever a run returns such a pair, it is reported
+//
+// The program is chosen by init from free choice bits, and so are the verdict
+// and the witness, which read only the program.
+//
+// ASSUME-1: branches are taken as independent, as the rule defines. The gap
+//   when they correlate: nil_value_correlated.fsl.
+// ASSUME-2: every check can succeed and can fail on some run, as in
+//   nil_value.fsl. The gap: nil_value_dead_check.fsl.
+// ASSUME-3: u and s are φ-nodes, not loads of result variables. A bare
+//   return in a function with a defer loads them: pairing_stores.fsl. A φ
+//   paired with a load: pairing_load.fsl.
+// ASSUME-4 (representation only): two arms in the loop and three edges into
+//   J. The loop gives the recursion into an earlier block, and a pair whose
+//   two values come from different rounds.
+spec Pairing {
+  enum UOp { UKeep, Nil, Alloc, Ext, UFromH }
+  enum SOp { SKeep, Bad, Good, Out, SFromH }
+  enum Guard { NoCheck, IsNil, NotNil }
+  enum Val { NilConst, NilExt, NilChecked, NonNil }
+  enum SVal { BadConst, BadExt, GoodVal }
+  enum Pc { Ready, Loop, Join, Returned, Aborted }
+  type Edge = 0..2
+  type Arm = 0..1
+  // An arm, or 2: no arm.
+  type Step = 0..2
+  type Rounds = 0..2
+  type Bit = 0..29
+
+  state {
+    pc: Pc,
+    ch: Map<Bit, Bool>,
+    // the program
+    u0: UOp, s0: SOp, bu: Map<Arm, UOp>, bs: Map<Arm, SOp>,
+    ju: Map<Edge, UOp>, js: Map<Edge, SOp>, jg: Map<Edge, Guard>,
+    // the verdict and its witness
+    rep: Bool, wk: Edge, wx: Step, wy: Step, wnil: Bool,
+    // the run: the values, and which store each came from
+    hu: Val, hs: SVal, uSrc: Step, sSrc: Step, uLater: Bool, lastArm: Step,
+    rounds: Rounds, taken: Edge, ru: Val, rs: SVal, follow: Bool
+  }
+
+  def pickEntryU(i: Bit) = if ch[i] then Nil else if ch[i + 1] then Alloc else Ext
+  def pickEntryS(i: Bit) = if ch[i] then Bad else if ch[i + 1] then Good else Out
+  def pickArmU(i: Bit) =
+    if ch[i] then (if ch[i + 1] then UKeep else Nil) else (if ch[i + 1] then Alloc else Ext)
+  def pickArmS(i: Bit) =
+    if ch[i] then (if ch[i + 1] then SKeep else Bad) else (if ch[i + 1] then Good else Out)
+  def pickJoinU(i: Bit) =
+    if ch[i] then (if ch[i + 1] then Nil else Alloc) else (if ch[i + 1] then Ext else UFromH)
+  def pickJoinS(i: Bit) =
+    if ch[i] then (if ch[i + 1] then Bad else Good) else (if ch[i + 1] then Out else SFromH)
+  def pickGuard(i: Bit) = if ch[i] then NoCheck else if ch[i + 1] then IsNil else NotNil
+
+  // --- the rule -------------------------------------------------------------------
+
+  // The last value set on the path x, then y.
+  def finU(x: Step, y: Step) =
+    if y != 2 and bu[y] != UKeep then bu[y] else if x != 2 and bu[x] != UKeep then bu[x] else u0
+  def finS(x: Step, y: Step) =
+    if y != 2 and bs[y] != SKeep then bs[y] else if x != 2 and bs[x] != SKeep then bs[x] else s0
+  def path(x: Step, y: Step) = x == 2 => y == 2
+  def uAt(k: Edge, x: Step, y: Step) = if ju[k] == UFromH then finU(x, y) else ju[k]
+  def sAt(k: Edge, x: Step, y: Step) = if js[k] == SFromH then finS(x, y) else js[k]
+  def uNilAt(k: Edge, x: Step, y: Step) =
+    if jg[k] == IsNil then (uAt(k, x, y) == Nil or uAt(k, x, y) == Ext)
+    else jg[k] == NoCheck and uAt(k, x, y) == Nil
+  def pairs(k: Edge, x: Step, y: Step) =
+    path(x, y) and uNilAt(k, x, y) and sAt(k, x, y) == Bad
+  def pairsOn(k: Edge) = exists x: Step { exists y: Step { pairs(k, x, y) } }
+  def reported() = exists k: Edge { pairsOn(k) }
+
+  // The witness: the first edge and path the rule found.
+  def firstEdge() = if pairsOn(0) then 0 else if pairsOn(1) then 1 else 2
+  def firstX(k: Edge) =
+    if exists y: Step { pairs(k, 0, y) } then 0 else if exists y: Step { pairs(k, 1, y) } then 1 else 2
+  def firstY(k: Edge, x: Step) = if pairs(k, x, 0) then 0 else if pairs(k, x, 1) then 1 else 2
+  def len(x: Step, y: Step) = (if x != 2 then 1 else 0) + (if y != 2 then 1 else 0)
+
+  // --- ASSUME-2: every check can succeed and fail ---------------------------------
+
+  def mayNilU(o: UOp) = o == Nil or o == Ext
+  def mayNonNilU(o: UOp) = o == Alloc or o == Ext
+  def loopMay(nilSide: Bool) =
+    (if nilSide then mayNilU(u0) else mayNonNilU(u0))
+    or (exists j: Arm { if nilSide then mayNilU(bu[j]) else mayNonNilU(bu[j]) })
+  def live(k: Edge) =
+    (jg[k] == IsNil => (if ju[k] == UFromH then loopMay(true) else mayNilU(ju[k])))
+    and (jg[k] == NotNil => (if ju[k] == UFromH then loopMay(false) else mayNonNilU(ju[k])))
+  def configOk() = forall k: Edge { live(k) }
+
+  init {
+    pc = Ready
+    u0 = pickEntryU(0)  s0 = pickEntryS(2)
+    forall j: Arm { bu[j] = pickArmU(4 + 4 * j)  bs[j] = pickArmS(6 + 4 * j) }
+    forall k: Edge { ju[k] = pickJoinU(12 + 6 * k)  js[k] = pickJoinS(14 + 6 * k)  jg[k] = pickGuard(16 + 6 * k) }
+    // The verdict and the witness read only the program set above.
+    rep = reported()  wk = firstEdge()  wx = firstX(firstEdge())
+    wy = firstY(firstEdge(), firstX(firstEdge()))  wnil = jg[firstEdge()] == IsNil
+    hu = NonNil  hs = GoodVal  uSrc = 2  sSrc = 2  uLater = false  lastArm = 2
+    rounds = 0  taken = 0  ru = NonNil  rs = GoodVal  follow = false
+  }
+
+  // --- the run --------------------------------------------------------------------
+
+  def ev(o: UOp, nilOut: Bool, old: Val) =
+    if o == Nil then NilConst else if o == Alloc then NonNil
+    else if o == Ext then (if nilOut then NilExt else NonNil) else old
+  def evs(o: SOp, badOut: Bool, old: SVal) =
+    if o == Bad then BadConst else if o == Good then GoodVal
+    else if o == Out then (if badOut then BadExt else GoodVal) else old
+  def passes(c: Guard, v: Val) =
+    if c == IsNil then v != NonNil else if c == NotNil then v == NonNil else true
+  def mark(c: Guard, v: Val) = if c == IsNil and v == NilExt then NilChecked else v
+  def goodNil(v: Val) = v == NilConst or v == NilChecked
+
+  action enter(nu: Bool, bsOut: Bool) {
+    requires pc == Ready  requires configOk()
+    pc = Loop
+    hu = ev(u0, nu, NonNil)  hs = evs(s0, bsOut, GoodVal)
+    follow = rep and nu == wnil and not bsOut
+  }
+
+  action round(j: Arm, nu: Bool, bsOut: Bool) {
+    requires pc == Loop
+    hu = ev(bu[j], nu, hu)  hs = evs(bs[j], bsOut, hs)
+    uSrc = if bu[j] != UKeep then j else uSrc
+    sSrc = if bs[j] != SKeep then j else sSrc
+    uLater = if bu[j] != UKeep and bs[j] == SKeep then true
+             else if bs[j] != SKeep then false else uLater
+    lastArm = j
+    rounds = min(rounds + 1, 2)
+    follow = follow and rounds < len(wx, wy) and (if rounds == 0 then j == wx else j == wy)
+             and nu == wnil and not bsOut
+  }
+
+  action leave() {
+    requires pc == Loop
+    pc = Join
+    follow = follow and rounds == len(wx, wy)
+  }
+
+  def uOn(k: Edge, nu: Bool) = if ju[k] == UFromH then hu else ev(ju[k], nu, NonNil)
+  def sOn(k: Edge, bsOut: Bool) = if js[k] == SFromH then hs else evs(js[k], bsOut, GoodVal)
+
+  action take(k: Edge, nu: Bool, bsOut: Bool) {
+    requires pc == Join  requires passes(jg[k], uOn(k, nu))
+    pc = Returned  taken = k
+    ru = mark(jg[k], uOn(k, nu))  rs = sOn(k, bsOut)
+    follow = follow and k == wk and nu == wnil and not bsOut
+  }
+
+  action abort() {
+    requires pc == Join
+    pc = Aborted  follow = false
+  }
+
+  terminal { pc == Returned or pc == Aborted or (pc == Ready and not configOk()) }
+
+  // --- what is proved -------------------------------------------------------------
+
+  // Never blocked: the witness's edge passes its check, and it returns the pair.
+  invariant ReportMeansNilWithBad {
+    (follow and pc == Join => passes(jg[wk], uOn(wk, wnil)))
+    and (follow and pc == Returned => (goodNil(ru) and rs == BadConst))
+  }
+  invariant NilWithBadIsReported {
+    (pc == Returned and goodNil(ru) and rs == BadConst) => reported()
+  }
+
+  // --- auxiliary ------------------------------------------------------------------
+
+  def curU() = if uSrc == 2 then u0 else bu[uSrc]
+  def curS() = if sSrc == 2 then s0 else bs[sSrc]
+  // The path of at most two rounds that leaves what the run holds.
+  def sx() =
+    if uSrc == 2 and sSrc == 2 then lastArm else if uSrc == 2 then sSrc
+    else if sSrc == 2 or uSrc == sSrc then uSrc else (if uLater then sSrc else uSrc)
+  def sy() = if uSrc == 2 or sSrc == 2 or uSrc == sSrc then 2 else (if uLater then uSrc else sSrc)
+  def valOf(o: UOp, v: Val) =
+    (v == NilConst => o == Nil) and (v == NilExt => o == Ext) and (v == NonNil => (o == Alloc or o == Ext))
+    and v != NilChecked
+  def svalOf(o: SOp, v: SVal) =
+    (v == BadConst => o == Bad) and (v == BadExt => o == Out) and (v == GoodVal => (o == Good or o == Out))
+
+  invariant ProgramShape {
+    u0 != UKeep and u0 != UFromH and s0 != SKeep and s0 != SFromH
+    and (forall j: Arm { bu[j] != UFromH and bs[j] != SFromH })
+    and (forall k: Edge { ju[k] != UKeep and js[k] != SKeep })
+    and (pc != Ready => configOk())
+  }
+  invariant VerdictFixed {
+    rep == reported() and wk == firstEdge() and wx == firstX(firstEdge())
+    and wy == firstY(firstEdge(), firstX(firstEdge())) and wnil == (jg[firstEdge()] == IsNil)
+  }
+  invariant FreshBeforeRun {
+    pc == Ready => (uSrc == 2 and sSrc == 2 and lastArm == 2 and rounds == 0 and not follow)
+  }
+  invariant FollowOnlyWhenReported { follow => rep }
+  invariant WitnessPath { rep => (path(wx, wy) and pairs(wk, wx, wy)) }
+  invariant RunValues { pc != Ready => (valOf(curU(), hu) and svalOf(curS(), hs)) }
+  invariant WitnessValues {
+    (follow and pc != Ready) => (
+      (curU() == Ext => hu == (if wnil then NilExt else NonNil)) and (curS() == Out => hs == GoodVal)
+    )
+  }
+  invariant Realizable {
+    pc != Ready => (curU() == finU(sx(), sy()) and curS() == finS(sx(), sy()) and path(sx(), sy()))
+  }
+  invariant SourcesStore {
+    (uSrc != 2 => bu[uSrc] != UKeep) and (sSrc != 2 => bs[sSrc] != SKeep)
+    and ((uSrc == 2 and sSrc != 2) => bu[sSrc] == UKeep)
+    and ((sSrc == 2 and uSrc != 2) => bs[uSrc] == SKeep)
+    and ((uSrc != 2 and sSrc != 2 and uSrc != sSrc) =>
+          (if uLater then bs[uSrc] == SKeep else bu[sSrc] == UKeep))
+    and ((rounds >= 1) => lastArm != 2) and (rounds == 0 => (lastArm == 2 and uSrc == 2 and sSrc == 2))
+    and ((uSrc == 2 and sSrc == 2 and lastArm != 2) => (bu[lastArm] == UKeep and bs[lastArm] == SKeep))
+  }
+  invariant WitnessInOrder {
+    (follow and pc != Ready) => (
+      rounds <= len(wx, wy)
+      and (rounds == 0 => (curU() == u0 and curS() == s0))
+      and (rounds == 1 => (curU() == finU(wx, 2) and curS() == finS(wx, 2)))
+      and (rounds == 2 => (curU() == finU(wx, wy) and curS() == finS(wx, wy)))
+      and (pc != Loop => rounds == len(wx, wy))
+    )
+  }
+  invariant ReturnedTraced {
+    pc == Returned => (
+      (ju[taken] == UFromH => (
+        (ru == hu or (ru == NilChecked and hu == NilExt and jg[taken] == IsNil))
+        and passes(jg[taken], hu)))
+      and (js[taken] == SFromH => rs == hs)
+      and (ju[taken] != UFromH => ((ru == NilConst => ju[taken] == Nil)
+            and (ru == NilChecked => (jg[taken] == IsNil and ju[taken] == Ext))))
+      and (js[taken] != SFromH => (rs == BadConst => js[taken] == Bad))
+      and (jg[taken] == NotNil => ru == NonNil)
+      and (ru == NilChecked => jg[taken] == IsNil)
+    )
+  }
+
+  // --- witnesses ------------------------------------------------------------------
+
+  // var u *T; var err error; if b { u = x } else { err = e }; return u, err
+  // (one round of the loop, then the edge that brings both from H).
+  reachable EdgesKeptApart {
+    pc == Returned and not reported() and u0 == Nil and s0 == Bad
+    and bu[0] == Alloc and bs[0] == SKeep and bu[1] == UKeep and bs[1] == Good
+    and ju[taken] == UFromH and js[taken] == SFromH and rounds == 1
+  }
+  // A nil set in one round, a nil error in the next: reported.
+  reachable PairAcrossRounds {
+    pc == Returned and follow and len(wx, wy) == 2 and ju[wk] == UFromH and js[wk] == SFromH
+    and not pairs(wk, wx, 2) and not pairs(wk, wy, 2)
+  }
+  // if u != nil { return u, s }: the check settles u before H is taken apart.
+  reachable CheckStopsThePair {
+    pc == Returned and not reported() and jg[taken] == NotNil and ju[taken] == UFromH
+    and js[taken] == SFromH and (exists x: Step { exists y: Step { path(x, y)
+      and finU(x, y) == Nil and finS(x, y) == Bad } })
+  }
+  // u := f(); if u == nil { return u, nil }: a value from before J, checked
+  // on the edge.
+  reachable CheckedOutsideWithBad {
+    pc == Returned and follow and jg[wk] == IsNil and ju[wk] == Ext and ru == NilChecked
+  }
+  reachable CheckedLoopValueWithBad {
+    pc == Returned and follow and jg[wk] == IsNil and ju[wk] == UFromH and ru == NilChecked
+  }
+  // return nil, err with err from outside: not reported. The gap.
+  reachable OutsideErrorNotReported {
+    pc == Returned and not reported() and ru == NilConst and rs == BadExt
+  }
+  // return u, nil with u from outside, unchecked: not reported. The gap.
+  reachable OutsideNilNotReported {
+    pc == Returned and not reported() and ru == NilExt and rs == BadConst
+  }
+}

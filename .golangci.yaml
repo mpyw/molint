@@ -33,5 +33,5 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/mpyw/nilproof)
+        - prefix(github.com/mpyw/molint)
       custom-order: true

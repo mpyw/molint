@@ -1,137 +1,114 @@
 # Implementation notes
 
-This file records design decisions and implementation details. The short, always-loaded instructions are in [AGENTS.md](../AGENTS.md). Open questions are in [#1](https://github.com/mpyw/nilproof/issues/1).
+This file records design decisions and implementation details. The short, always-loaded instructions are in [AGENTS.md](../AGENTS.md). What molint reports is specified in [rules.md](rules.md). The history of the decisions is in [#1](https://github.com/mpyw/molint/issues/1).
 
 ## Project overview
 
-**nilproof** is a Go linter that reports a returned pointer it cannot prove non-nil. It is built on [`go/analysis`](https://pkg.go.dev/golang.org/x/tools/go/analysis) and [`buildssa`](https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/buildssa).
+**molint** is a Go linter that enforces [samber/mo](https://github.com/samber/mo). It is built on [`go/analysis`](https://pkg.go.dev/golang.org/x/tools/go/analysis) and [`buildssa`](https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/buildssa).
 
-**Unproven is reported.** errlogreturn leans toward silence. nilproof leans the other way, because it is adopted on purpose by a new application that wants the guarantee. Where the proof cannot follow a value, the report says so, and the author returns `mo.Option`, checks the value, or writes an ignore with a reason.
+It reads the shape of signatures, and follows values only inside one function. It has no analysis facts, so it does not analyze dependencies. Finding nil panics across functions is left to [nilaway](https://github.com/uber-go/nilaway).
 
 ## Architecture
 
 ```text
-analyzer.go            Analyzer, ErrNoSSA
-cmd/nilproof/          singlechecker entry point
-internal/              the engine: one flat package, one namespace per file
-  run.go               Run: summarize to a fixpoint, export facts, report
-  checker.go           the per-pass state, with each stage's book embedded
-  summary.go           function summaries, the fixpoint, and Fact import/export
-  global.go            package-level pointer variables and their stores
-  judge.go             the rule: which returns must prove which results
-  proof.go             the proof of one value at one site
-  report.go            diagnostic text
-  fact.go              Fact and GlobalFact
-internal/nilcheck/     what the nil checks above a block say about a value
-internal/typeutil/     pointer and error results, and names as diagnostics spell them
-internal/directive/    //nilproof: comments
+analyzer.go              Analyzer, one flag per rule, ErrNoSSA
+cmd/molint/              singlechecker entry point
+internal/                the rules: one flat package, one namespace per file
+  run.go                 Run: every rule over the package, then the reports in order
+  checker.go             the per-pass state, and reporting through the directives
+  config.go              Config: which rules are on
+  implementing.go        the methods that implement an interface, which some rules exempt
+  shape.go               return-bool and return-error
+  returnnil.go           return-nil
+  calls.go               the loop over static calls, for the rules about mo calls
+  wrapnil.go             wrap-nil
+  unwrapnil.go           unwrap-nil
+  unwrapdiscard.go       unwrap-discard
+  resultzero.go          result-zero
+internal/rule/           the rule names, shared by flags, messages and directives
+internal/directive/      //molint: comments
+internal/flow/           following a value back through one function
+internal/nilcheck/       what the nil checks above a block say about a value
+internal/typeutil/       type questions, samber/mo, and how messages spell types
 ```
 
-The engine is flat because its parts are mutually recursive. A summary is the judgement of a function. The judgement proves values. A proof of a call reads the callee's summary, and a proof of a variable reads the variable's summary, whose stores are proven in turn. Splitting that cycle across packages would only add exports.
+The rules share one pass's state and nothing else, so they sit in one flat package with a file each. The file boundaries are checked by declscope.
 
 Everything that stands alone has its own package:
 
 | Package | Why it stands alone |
 | --- | --- |
-| `nilcheck` | It reads branches and dominators only. It knows nothing of summaries |
+| `rule` | Names only. Flags, messages and directives all spell them |
+| `directive` | Reads comments and source text only |
+| `flow` | Reads SSA only. It knows nothing of rules or of samber/mo |
+| `nilcheck` | Reads branches and dominators only |
 | `typeutil` | Type questions with no state |
-| `directive` | It reads comments only |
-
-**Keep new code out of the flat package unless it joins that cycle.**
 
 ### declscope
 
-The repository is checked by [declscope](https://github.com/mpyw/declscope) with `qualify: ondemand` and `exported: true` (`.declscope.yaml`). `declscope shrink` runs before the analyzer. The rules follow errlogreturn:
+The repository is checked by [declscope](https://github.com/mpyw/declscope) with `qualify: ondemand` and `exported: true` (`.declscope.yaml`). `declscope shrink` runs before the analyzer.
 
 | Rule | Why |
 | --- | --- |
 | No `//declscope:core` | A core file hides its names from the naming rule |
-| Each stage's state is a `...Book` struct embedded in `checker` | Call sites read `c.funcs`, and reaching another stage's state is a boundary crossing |
-| A book is `//declscope:package`, and each field of it `//declscope:private` | `checker` spells the book, and no other file reads its fields |
-| A method shared across files states `//declscope:package` with the reading file | `proofSite.state` and `proofFailure.origin` are read from `judge.go` and `report.go` |
-| `nilcheck.Unknown` stays exported with an `overexported` ignore | No other package names it, but the enum is incomplete without its zero value |
+| A rule's entry point is `//declscope:package`, with the file that calls it | `run.go` and `calls.go` call into each rule's file |
+| `flow` is split by concept: `site.go`, `tracer.go`, `store.go`, `return.go`, `range.go`, `pair.go` | Each name carries its file's concept, as `SiteAt`, `NilTracer`, `storesReaching`, `RangeReturns`. One file would have made every name carry `flow` |
+| `nilcheck.Unknown`, `typeutil.TrailingNone` and `typeutil.Option` stay exported with an `overexported` ignore | No other package names them, but each enum is incomplete without them |
 
-`proof` is a type the other files never name. `judge.go` gets one from `newProof` and calls its package-scoped methods.
+## Following a value
 
-## The analysis
+`flow.Tracer` tells whether a value may be a constant a rule looks for. `NilTracer` looks for nil, `TrueTracer` for the constant true, and `CheckingTracer` for any constant, such as a zero `mo.Result`.
 
-### Summaries and the fixpoint
-
-A function's summary is the bit set of its pointer results proven on every return. A result past the 64th shifts out of the set, so it is never proven.
-
-Inside a package, summaries are a greatest fixpoint. Every function starts with every pointer result proven. Each round judges every function against the summaries of the moment and takes back what failed. A round that takes nothing back ends it. Rounds only take proofs back, so they end.
-
-| Consequence | Example |
+| Value | Followed to |
 | --- | --- |
-| Mutual recursion is proven when its base cases are | `Even` and `Odd` in `errpair` |
-| A function that never returns is proven | `Spin` in `errpair`. It is vacuously true, since it returns nothing |
+| `Const` | Itself |
+| `ChangeType` | Its operand |
+| `Phi` | Each edge, judged at that edge |
+| A load of an `Alloc` whose address is only loaded and stored | The stores that reach the load, and the `Alloc` itself as a store of the zero value |
+| Anything else | Nothing. It is not a constant |
 
-Summaries cross packages as a `Fact` on the declared function. Every dependency is analyzed, the standard library included, so `strings.NewReader` is proven from its body. An instance of a generic function is read through its origin. A bound method or a thunk is read through the method it wraps.
+A nil check that dominates a site settles a value there. `nilcheck` reads a comparison with any zero constant, so a comparison of a struct with its zero value counts too. That is how `result-zero` stops at `if r == (mo.Result[int]{})`.
 
-A package-level pointer variable is proven when every store to it in its package is proven, and nothing else takes its address. The stores of variable initializers are in the package's `init` function, which is not among `buildssa`'s source functions, so it is read too. A store from another package, to an exported variable, is not seen.
+A function literal that captures a variable and only loads it keeps the variable followed. One that stores into it, or any other use of its address, stops the following.
 
-### The rule
+### Returns
 
-`judge` decides which returns must prove which results:
+`flow.Returns` reads each `Return` of a function. A return that stores its results and loads them again is read as returning the stored values. A function with a `defer` does this. Only a return statement's own instructions may sit between the store and the load: other stores, `RunDefers`, and loads. So an assignment followed by a call is not mistaken for a return.
 
-| Function | A return must prove its pointers when |
-| --- | --- |
-| No error result | Always |
-| Last result is `error` | The error may be nil: the constant, a value checked to be nil, or a φ that may bring either |
-| Last result is `error` | The error is taken as non-nil, but the pointer and the error come from one call. Then the callee must be proven |
+A range-over-func body is a synthetic function literal (`Synthetic == "range-over-func yield"`). A `return` in it stores the results into captured variables of the enclosing function. `flow.RangeReturns` maps each captured variable back to the result it holds, through the `MakeClosure` that binds it, and through nested bodies. The enclosing function's own load of those variables is not followed, since the body stores into them.
 
-A return whose error is a φ of its own block is judged along each incoming edge. Every other φ of that block is read along the same edge. So `var u *T; var err error; if b { u = &T{} } else { err = e }; return u, err` is proven.
+### Pairing
 
-### The proof
+`flow.Pair` holds a nil pointer to the error or the bool beside it. Where either value is a φ, each incoming edge is judged on its own, with the other value read along the same edge. That repeats while φs remain, into earlier blocks. A value defined before the φ's block takes the checks on the edge too. Before a φ is taken apart, a nil check at the current sites settles the value for the whole path.
 
-`proof.nonNil` proves one value at one site. A site is the start of a block, or the edge a φ reads the value from.
-
-| Value | Proven when |
-| --- | --- |
-| `Alloc`, `FieldAddr`, `IndexAddr`, `Global`, `FreeVar` | Always. An address is never nil. A field or element of a nil pointer panics first |
-| A value checked by a dominating branch | The check says non-nil (`nilcheck`) |
-| `ChangeType` | Its operand is proven |
-| `Phi` | Every edge is proven at its own edge |
-| A call's result | The callee is proven. When it returns an error, that error must also be checked nil on the way |
-| A load of a package-level variable | The variable is proven |
-
-`nilcheck.At` walks the dominator tree. A dominating block with a single predecessor puts that edge on every path. SSA values are never redefined between a check and a use, so the check still holds.
-
-A φ that reaches itself round a loop is taken as proven on the back edge. A φ's result is remembered for the judgement. A failure is always final. A success is remembered only when no cycle was assumed on the way.
+A bare return that loads both results from followed variables is paired along each path back to the stores, both values read on that path.
 
 ## Rejected designs
 
 | Design | Why not |
 | --- | --- |
-| Reporting `return nil` by syntax | `var p *T; return p`, a bare return of a named result, and a map miss all pass it |
-| Proving errors non-nil too | `status.Error`, `errors.WithStack` and similar return nil for a nil input. Every `return nil, wrap(err)` would be reported. An error other than the constant nil is taken as non-nil |
-| Trusting the `(*T, error)` convention for every callee | A dependency that really returns `nil, nil` would pass. Bodies are read wherever they exist. Only calls without a body are trusted |
-| Granting a fact to a function whose report is ignored | The ignore records that the author accepts nil there. Callers must not rely on it |
-| Suggested fixes | Most fixes change a signature and break callers in other packages. See #1 |
-| Running nilproof on itself | nilproof is a tool, not the kind of application the rule is for. Its engine returns a nil `*proofFailure` to mean "proven" |
-| Unexporting `nilcheck.Unknown`, as `declscope shrink` proposed | An exported enum with an unexported zero value cannot be spelled by its users |
-
-## Known limitations
-
-Each is a false report, not a missed one.
-
-| Case | Why |
-| --- | --- |
-| `if x.f != nil { return x.f }` | Two loads of a field are two SSA values. The check proves the first only |
-| A method that returns its receiver | A receiver is a parameter. Bubble Tea models return `m` from `Update` |
-| A field set in every constructor | Fields are never proven. The zero value of a struct holds nil |
-| `if !ok` after `p, ok := lookup()` | Only comparisons with nil are read. An `ok` flag says nothing about `p` |
+| Prove every returned pointer non-nil, with facts across packages (the first nilproof) | A method that returns its receiver, as Bubble Tea models do, was most of the reports on one application |
+| Make `*T` a non-nil contract everywhere: check every write, trust every read | Every gap became a nil that reaches a trusted read. Closing them needed error proofs, facts derived from dependencies, a field invariant for `mo.Option`, a list of known functions, and definite assignment with defers and package initialization. Two adversarial reviews kept finding more |
+| Forbid only known nils, and trust everything else | It is neither sound nor simple, and its value over nilaway was unclear |
+| Special-case samber/mo by name beyond its package path | The rules name `Some`, `Ok`, `Err`, `Get`, `OrEmpty` and `OrElse` only. Everything else is read from types |
+| Look for interfaces in every package in the import graph | Whether a method is exempt would depend on what some dependency happens to import. Only the package and its direct imports count |
+| A list of well-known interfaces, such as `json.Marshaler` | It is a list to maintain, for a rule that is off by default. `return-error` users write an ignore instead |
+| Exempt a mo constructor held in a local variable | SSA lowers `f := mo.Some[*T]; f(nil)` to a direct call, so exempting it would take extra work to hide a real nil |
+| Report an implicit conversion to an interface where it is written | SSA gives it no position. It is reported where the converted value is used |
+| Report diagnostics as they are found | The signature rules run before the SSA rules, so reports came out of line order. They are sorted by position at the end of the pass |
 
 ## Testing
 
 ```bash
-go test ./...          # analysistest over testdata/src, and unit tests
-mise x -- ./test_all.sh  # tests, golangci-lint, declscope shrink, declscope, coverage
+go test ./...            # analysistest over testdata/src, and unit tests
+mise x -- ./test_all.sh  # tests, golangci-lint, declscope shrink, declscope, specs, coverage
 ```
 
-- `testdata/src/*` are analysistest packages. `lib` is imported by `crosspkg` to prove facts across packages.
-- **Summaries are pinned as facts.** `Fact.String` renders `nonnil r0, r2`, and `GlobalFact.String` renders `nonnil`. Every declared function with a proven pointer result needs a `// want Name:"nonnil r0"` on its declaration line.
-- A report is on the `return` line.
-- An ignore without a reason cannot be tested in a fixture. The expectation comment on its line would be read as the reason. `internal/directive` tests it instead.
-- `coverage/coverage.go` reaches the less common branches: every origin a diagnostic names, error φs round a loop, a result past the 64th.
-- **Coverage is held at 99.5% of statements** (`coverage.sh`). The statements left are `main` and the two `AFact` methods. Code no input reaches otherwise is deleted, not excluded.
+- `testdata/src/*` are analysistest packages, one or more per rule. `github.com/samber/mo` there is a stub, with bodies copied from v1.17.0.
+- `analyzer_test.go` runs the default flags, `-return-error`, and `-return-bool=false`. It runs a package again after restoring a flag, to prove that flags are read on each run. No test may call `t.Parallel`, since the flags are global.
+- A directive without a reason cannot be pinned in a fixture: the expectation comment on its line would be read as the reason. `internal/directive` tests it.
+- **Coverage is held at 99.5% of statements** (`coverage.sh`). The only statement left is `main`. Code no input reaches is deleted, not excluded.
+
+### Formal specs
+
+`spec/*.fsl` model the rules that reason about paths: nil values, pairing, loads of variables that are not lifted, and zero Results. [spec/README.md](../spec/README.md) lists what each proves. `spec/verify.sh` is the gate. **When one of those rules changes, change its spec first.**

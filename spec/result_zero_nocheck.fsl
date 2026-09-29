@@ -1,0 +1,189 @@
+// FAILS ON PURPOSE. This is result-zero with comparisons ignored on the way:
+// a comparison is not a use, and nothing stops a zero. The counterexample is
+// why design/rules.md, and result_zero.fsl, judge each edge as a nil value is
+// judged.
+//
+// A φ-node is then a zero Result when any edge brings one, whatever the edge
+// compared:
+//
+//   var r mo.Result[T]
+//   if c { r = mo.Ok(v) }
+//   if r == (mo.Result[T]{}) { r = mo.Err(errNotFound) }
+//   return r                    reported: "a zero mo.Result[T] is Ok ..."
+//
+// The edge that keeps r runs only when r is not zero. No run returns a zero.
+//
+// The program, the run and the claim are those of result_zero.fsl, except
+// for brings(). Every comparison can succeed and can fail (ASSUME-2 there),
+// so the edge the witness is blocked on is a live one. The run is limited to
+// programs that result_zero.fsl's rule does not report, so every report here
+// is this rule's own.
+spec ResultZeroNoCheck {
+  enum Op { Keep, Zero, Built, Ext }
+  enum Cmp { NoCmp, EqZero, NeZero }
+  enum Instr { Return, Argument, ToInterface, FieldStore, MethodCall, Compare }
+  enum Val { ZeroConst, ZeroExt, ZeroChecked, NonZero }
+  enum Pc { Ready, Early, Joined, Done, Aborted }
+  type Edge = 0..2
+  type Pre = 0..1
+  type Bit = 0..20
+
+  state {
+    pc: Pc,
+    ch: Map<Bit, Bool>,
+    // the program
+    p: Map<Pre, Op>, a: Map<Edge, Op>, g: Map<Edge, Cmp>, w: Op, instr: Instr,
+    // the verdict and its witness
+    rep: Bool, wk: Edge, we: Pre, wzero: Bool,
+    // the run
+    pr: Val, r: Val, used: Val, passedOn: Bool, taken: Edge, follow: Bool
+  }
+
+  def pickPre(i: Bit) = if ch[i] then Zero else if ch[i + 1] then Built else Ext
+  def pickOp(i: Bit) =
+    if ch[i] then (if ch[i + 1] then Keep else Zero) else (if ch[i + 1] then Built else Ext)
+  def pickCmp(i: Bit) = if ch[i] then NoCmp else if ch[i + 1] then EqZero else NeZero
+  def pickInstr(i: Bit) =
+    if ch[i] then (if ch[i + 1] then Return else (if ch[i + 2] then Argument else ToInterface))
+    else if ch[i + 1] then (if ch[i + 2] then FieldStore else MethodCall) else Compare
+
+  // --- the rule -------------------------------------------------------------------
+
+  def isUse() = instr != Compare
+  def pZero() = exists e: Pre { p[e] == Zero }
+  def zeroOn(k: Edge) = a[k] == Zero or (a[k] == Keep and pZero())
+  // THE LITERAL READING: a comparison on the way does not stop a zero.
+  def brings(k: Edge) = g[k] == EqZero or zeroOn(k)
+  // The rule of result_zero.fsl, to pick the programs it does not report.
+  def provedReported() =
+    isUse() and (if w != Keep then w == Zero else (exists k: Edge { g[k] == EqZero or (g[k] == NoCmp and zeroOn(k)) }))
+  def zeroAtUse() = if w != Keep then w == Zero else (exists k: Edge { brings(k) })
+  def reported() = isUse() and zeroAtUse()
+
+  // --- ASSUME-2 -------------------------------------------------------------------
+
+  def mayZero(o: Op) = o == Zero or o == Ext
+  def mayNonZero(o: Op) = o == Built or o == Ext
+  def mayZeroOn(k: Edge) = mayZero(a[k]) or (a[k] == Keep and (exists e: Pre { mayZero(p[e]) }))
+  def mayNonZeroOn(k: Edge) =
+    mayNonZero(a[k]) or (a[k] == Keep and (exists e: Pre { mayNonZero(p[e]) }))
+  def live(k: Edge) =
+    (g[k] == EqZero => mayZeroOn(k)) and (g[k] == NeZero => mayNonZeroOn(k))
+  def configOk() = forall k: Edge { live(k) }
+
+  // --- the witness ----------------------------------------------------------------
+
+  // The value on edge k when P took edge e and every call's result is zero
+  // (z) or not.
+  def evOp(o: Op, old: Val, z: Bool) =
+    if o == Keep then old else if o == Zero then ZeroConst else if o == Built then NonZero
+    else if z then ZeroExt else NonZero
+  def onEdge(k: Edge, e: Pre, z: Bool) = evOp(a[k], evOp(p[e], NonZero, z), z)
+  def passes(c: Cmp, v: Val) =
+    if c == EqZero then v != NonZero else if c == NeZero then v == NonZero else true
+  def mark(c: Cmp, v: Val) = if c == EqZero and v == ZeroExt then ZeroChecked else v
+  def goodZero(v: Val) = v == ZeroConst or v == ZeroChecked
+  // What the witness needs at J: after an overwrite, only to pass.
+  def okAt(k: Edge, e: Pre, z: Bool) =
+    passes(g[k], onEdge(k, e, z)) and (w != Keep or goodZero(mark(g[k], onEdge(k, e, z))))
+  def okEdge(k: Edge) = exists e: Pre { okAt(k, e, false) or okAt(k, e, true) }
+  def witnessEdge() =
+    if w == Keep then (if brings(0) then 0 else if brings(1) then 1 else 2)
+    else (if okEdge(0) then 0 else if okEdge(1) then 1 else 2)
+  def witnessZ(k: Edge) = not (okAt(k, 0, false) or okAt(k, 1, false))
+  def witnessPre(k: Edge, z: Bool) = if okAt(k, 0, z) then 0 else 1
+
+  init {
+    pc = Ready
+    forall e: Pre { p[e] = pickPre(2 * e) }
+    forall k: Edge { a[k] = pickOp(4 + 2 * k)  g[k] = pickCmp(10 + 2 * k) }
+    w = pickOp(16)  instr = pickInstr(18)
+    // The verdict and the witness read only the program set above.
+    rep = reported()  wk = witnessEdge()  wzero = witnessZ(witnessEdge())
+    we = witnessPre(witnessEdge(), witnessZ(witnessEdge()))
+    pr = NonZero  r = NonZero  used = NonZero  passedOn = false  taken = 0  follow = false
+  }
+
+  // --- the run --------------------------------------------------------------------
+
+  action early(e: Pre, z: Bool) {
+    requires pc == Ready  requires configOk()  requires not provedReported()
+    pc = Early
+    pr = evOp(p[e], NonZero, z)
+    follow = rep and e == we and z == wzero
+  }
+
+  action arm(k: Edge, z: Bool) {
+    requires pc == Early
+    requires passes(g[k], evOp(a[k], pr, z))
+    pc = Joined  taken = k
+    r = mark(g[k], evOp(a[k], pr, z))
+    follow = follow and k == wk and z == wzero
+  }
+
+  // No edge may pass its comparison: the function panics or never returns.
+  action abort() {
+    requires pc == Early
+    pc = Aborted  follow = false
+  }
+
+  action use(z: Bool) {
+    requires pc == Joined
+    pc = Done
+    used = evOp(w, r, z)
+    // The run's own reading: every instruction but a comparison passes the
+    // Result on; a comparison gives a bool.
+    passedOn = instr == Return or instr == Argument or instr == ToInterface
+               or instr == FieldStore or instr == MethodCall
+    follow = follow and not z
+  }
+
+  terminal { pc == Done or pc == Aborted or (pc == Ready and not configOk()) }
+
+  // --- what is proved -------------------------------------------------------------
+
+  invariant ReportMeansAZeroIsUsed {
+    (follow and pc == Early => passes(g[wk], evOp(a[wk], pr, wzero)))
+    and ((follow and pc == Done) => (passedOn and goodZero(used)))
+  }
+  invariant ZeroUseIsReported { (pc == Done and goodZero(used) and passedOn) => reported() }
+  invariant ComparedZeroUseIsReported {
+    (pc == Done and g[taken] == EqZero and w == Keep and passedOn) => reported()
+  }
+
+  // The auxiliary invariants of the proved spec are left out: a failing
+  // spec needs no induction, and each must break on its claim.
+
+  // --- witnesses ------------------------------------------------------------------
+
+  // var r mo.Result[T]; if c { r = mo.Ok(v) }; return r
+  reachable ZeroThroughAJoin {
+    pc == Done and reported() and follow and instr == Return and p[we] == Zero
+    and a[wk] == Keep and used == ZeroConst
+  }
+  // if r == (mo.Result[T]{}) { r = mo.Err(e) }; return r, where r may be zero
+  // or built, and the edge that keeps r runs.
+  reachable ComparisonStopsTheZero {
+    pc == Done and not reported() and isUse() and w == Keep and pZero()
+    and a[taken] == Keep and g[taken] == NeZero and used == NonZero
+  }
+  reachable ComparedZeroIsReported {
+    pc == Done and reported() and follow and g[wk] == EqZero and used == ZeroChecked
+  }
+  reachable ComparisonIsNotAUse {
+    pc == Done and not reported() and instr == Compare and used == ZeroConst
+  }
+  reachable OverwriteBeforeUse {
+    pc == Done and not reported() and isUse() and w == Built
+    and (exists k: Edge { brings(k) })
+  }
+  reachable WitnessAfterOverwrite { follow and pc == Done and w == Zero and g[wk] == NeZero }
+  reachable ConversionToInterfaceIsAUse {
+    pc == Done and reported() and instr == ToInterface and used == ZeroConst
+  }
+  reachable FieldStoreIsAUse {
+    pc == Done and reported() and instr == FieldStore and used == ZeroConst
+  }
+  // A call's result that is zero, never compared: the gap.
+  reachable OutsideZeroIsMissed { pc == Done and not reported() and isUse() and used == ZeroExt }
+}

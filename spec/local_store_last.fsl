@@ -1,0 +1,174 @@
+// FAILS ON PURPOSE. This is the rule that reads a load as the last store
+// before it in program order, and the counterexample is the reason the rule
+// follows the stores that reach the load instead.
+//
+// Across branches, the last store in the text is on one arm only:
+//
+//   var p *T
+//   if a { p = nil } else if b { p = &T{} } else { p = &T{} }
+//   return p                    (a bare return in a function with a defer)
+//
+// The last store in program order is &T{}, so nothing is reported. The run
+// that takes the first arm loads nil. An arm that stores nothing lets the
+// Alloc's zero through in the same way.
+//
+// The program, the run and the claim are those of local_store.fsl, except
+// for loadNil().
+spec LocalStoreLast {
+  enum Store { Keep, Nil, Alloc, Ext }
+  enum Escape { NoEscape, LoadsOnly, StoresInto, AddrPassed }
+  enum Effect { Keeps, SetsNonNil, SetsOutside }
+  enum Val { NilConst, NilExt, NonNil }
+  enum Pc { Ready, Judged, Loop, Left, Loaded }
+  type Arm = 0..2
+  type Rounds = 0..2
+  type Bit = 0..15
+
+  state {
+    pc: Pc,
+    ch: Map<Bit, Bool>,
+    // the program
+    s0: Store, arm: Map<Arm, Store>, looped: Bool,
+    esc: Escape, eff: Effect, deferred: Bool, s3: Store,
+    // the verdict and its witness
+    rep: Bool, wArm: Arm, wRounds: Rounds,
+    // the run
+    x: Val, rounds: Rounds, rv: Val, follow: Bool
+  }
+
+  def pickStore(i: Bit) =
+    if ch[i] then (if ch[i + 1] then Keep else Nil) else (if ch[i + 1] then Alloc else Ext)
+  def pickEscape(i: Bit) =
+    if ch[i] then (if ch[i + 1] then NoEscape else LoadsOnly)
+    else (if ch[i + 1] then StoresInto else AddrPassed)
+  def pickEffect(i: Bit) = if ch[i] then Keeps else if ch[i + 1] then SetsNonNil else SetsOutside
+
+  init {
+    pc = Ready
+    s0 = pickStore(0)
+    forall k: Arm { arm[k] = pickStore(2 + 2 * k) }
+    looped = ch[8]
+    esc = pickEscape(9)  eff = pickEffect(11)  deferred = ch[13]  s3 = pickStore(14)
+    rep = false  wArm = 0  wRounds = 0
+    x = NonNil  rounds = 0  rv = NonNil  follow = false
+  }
+
+  // --- the rule -------------------------------------------------------------------
+
+  def followed() = esc == NoEscape or esc == LoadsOnly
+  def entryNil() = s0 == Keep or s0 == Nil
+  def someArmNil() = exists k: Arm { arm[k] == Nil }
+  def someArmKeeps() = exists k: Arm { arm[k] == Keep }
+  def joinNil() = someArmNil() or (entryNil() and (looped or someArmKeeps()))
+  // THE NAIVE RULE: the last store before the load in program order.
+  def lastStore() =
+    if s3 != Keep then s3 else if arm[2] != Keep then arm[2]
+    else if arm[1] != Keep then arm[1] else if arm[0] != Keep then arm[0]
+    else if s0 != Keep then s0 else Nil
+  def loadNil() = lastStore() == Nil
+  def reported() = followed() and loadNil()
+
+  // The witness.
+  def firstNilArm() = if arm[0] == Nil then 0 else if arm[1] == Nil then 1 else 2
+  def firstKeepArm() = if arm[0] == Keep then 0 else if arm[1] == Keep then 1 else 2
+  def witnessArm() = if someArmNil() then firstNilArm() else firstKeepArm()
+  def witnessRounds() = if s3 == Keep and not someArmNil() and looped then 0 else 1
+
+  action judge() {
+    requires pc == Ready
+    pc = Judged
+    rep = reported()  wArm = witnessArm()  wRounds = witnessRounds()
+  }
+
+  // --- the run --------------------------------------------------------------------
+
+  def store(st: Store, old: Val, nilOut: Bool) =
+    if st == Keep then old else if st == Nil then NilConst else if st == Alloc then NonNil
+    else if nilOut then NilExt else NonNil
+  def escapes() = esc == StoresInto or esc == AddrPassed
+  def effect(old: Val, nilOut: Bool) =
+    if not escapes() or eff == Keeps then old else if eff == SetsNonNil then NonNil
+    else if nilOut then NilExt else NonNil
+
+  action enter(n: Bool) {
+    requires pc == Judged
+    pc = Loop
+    x = store(s0, NilConst, n)
+    follow = rep and not n
+  }
+
+  action round(k: Arm, n: Bool) {
+    requires pc == Loop  requires looped or rounds == 0
+    x = store(arm[k], x, n)
+    rounds = min(rounds + 1, 2)
+    follow = follow and rounds < wRounds and k == wArm and not n
+  }
+
+  action leave() {
+    requires pc == Loop  requires looped or rounds == 1
+    pc = Left
+    follow = follow and rounds == wRounds
+  }
+
+  // The escape point, the store S3, the deferred escape, then the load.
+  action load(ne: Bool, n3: Bool) {
+    requires pc == Left
+    pc = Loaded
+    rv = if deferred then effect(store(s3, x, n3), ne) else store(s3, effect(x, ne), n3)
+    follow = follow and not ne and not n3
+  }
+
+  terminal { pc == Loaded }
+
+  // --- what is proved -------------------------------------------------------------
+
+  invariant WitnessNeverBlocked {
+    (follow and pc == Loop) => (
+      (rounds < wRounds => (looped or rounds == 0))
+      and (rounds == wRounds => (looped or rounds == 1))
+    )
+  }
+  invariant ReportMeansANilIsLoaded { (follow and pc == Loaded) => rv == NilConst }
+  invariant ConstantNilIsReported {
+    (pc == Loaded and rv == NilConst and not escapes()) => reported()
+  }
+
+  // The auxiliary invariants of the proved spec are left out: a failing
+  // spec needs no induction, and each must break on its claim.
+
+  // --- witnesses ------------------------------------------------------------------
+
+  // var p *T; defer func() { log(p) }(); if c { p = x }; return
+  reachable LoadOnlyCaptureIsFollowed {
+    pc == Loaded and reported() and esc == LoadsOnly and s3 == Keep and rv == NilConst
+  }
+  // p = nil; defer func() { p = def }(); return: the load gives the deferred store.
+  reachable DeferredStoreIsNotFollowed {
+    pc == Loaded and not reported() and esc == StoresInto and deferred and s3 == Nil
+    and eff == SetsNonNil and rv == NonNil
+  }
+  // The witness runs to the load, through an arm and through the loop.
+  reachable WitnessThroughAnArm { follow and pc == Loaded and rounds == 1 and arm[wArm] == Nil }
+  reachable WitnessSkipsTheLoop { follow and pc == Loaded and rounds == 0 and looped }
+  // Not followed, so a nil that is loaded goes unreported: the gap.
+  reachable EscapedNilIsMissed { pc == Loaded and not reported() and escapes() and rv == NilConst }
+  // Every arm stores &T{}: the entry's nil does not reach, without a loop.
+  reachable ArmsKillTheEntry {
+    pc == Loaded and not reported() and not looped and entryNil() and s3 == Keep
+    and (forall k: Arm { arm[k] == Alloc }) and followed()
+  }
+  // The same arms in a loop that may run zero times: the entry's nil reaches.
+  reachable LoopLetsTheEntryReach {
+    pc == Loaded and reported() and looped and entryNil() and s3 == Keep
+    and (forall k: Arm { arm[k] == Alloc }) and rounds == 0 and rv == NilConst
+  }
+  // An arm that stores nil, after an entry that is not nil, with another arm
+  // after it in program order.
+  reachable NilFromAnEarlierArm {
+    pc == Loaded and reported() and s0 == Alloc and arm[0] == Nil and arm[2] == Alloc
+    and s3 == Keep and rv == NilConst
+  }
+  reachable OverwriteBeforeLoad {
+    pc == Loaded and not reported() and joinNil() and s3 == Alloc and followed()
+  }
+}
