@@ -305,7 +305,7 @@ The same as `return-bool`, with `error` in place of `bool`. It is off unless `-r
 <td>
 
 ```go
-func Find() (*User, error)
+func Find() (User, error)
 ```
 
 </td>
@@ -340,7 +340,7 @@ func Close() error
 #### Fix
 
 ```go
-func Find() mo.Result[*User]
+func Find() mo.Result[User]
 func Load() mo.Result[lo.Tuple2[Config, Meta]]
 ```
 
