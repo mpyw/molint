@@ -81,14 +81,92 @@ Nothing is reported in a generated file. Test files are checked like any other f
 
 A return must not give a nil pointer.
 
-| Return | Valid? | Reason |
-| --- | --- | --- |
-| `return nil` in `func F() *T` | ❌ | The result is a nil pointer |
-| `var p *T; return p` | ❌ | `p` is never set, so it is nil |
-| `return nil, nil` in `func F() (*T, error)` | ❌ | Both the pointer and the error are nil |
-| `return nil, err` in `func F() (*T, error)` | ✅ | The error is not nil |
-| `return nil, false` in `func F() (*T, bool)` | ✅ | For this rule. `return-bool` reports the signature |
-| `return nil, true` in `func F() (*T, bool)` | ❌ | `ok` says the value is there, but it is nil |
+<table>
+<thead>
+<tr><th>Code</th><th>Valid?</th><th>Reason</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>
+
+```go
+func F() *T {
+	return nil
+}
+```
+
+</td>
+<td>❌</td>
+<td>The result is a nil pointer</td>
+</tr>
+<tr>
+<td>
+
+```go
+func F() *T {
+	var p *T
+	return p
+}
+```
+
+</td>
+<td>❌</td>
+<td><code>p</code> is never set, so it is nil</td>
+</tr>
+<tr>
+<td>
+
+```go
+func F() (*T, error) {
+	return nil, nil
+}
+```
+
+</td>
+<td>❌</td>
+<td>Both the pointer and the error are nil</td>
+</tr>
+<tr>
+<td>
+
+```go
+func F() (*T, error) {
+	return nil, ErrNotFound
+}
+```
+
+</td>
+<td>✅</td>
+<td>The error is not nil</td>
+</tr>
+<tr>
+<td>
+
+```go
+func F() (*T, bool) {
+	return nil, false
+}
+```
+
+</td>
+<td>✅</td>
+<td>For this rule. <code>return-bool</code> reports the signature</td>
+</tr>
+<tr>
+<td>
+
+```go
+func F() (*T, bool) {
+	return nil, true
+}
+```
+
+</td>
+<td>❌</td>
+<td><code>ok</code> says the value is there, but it is nil</td>
+</tr>
+</tbody>
+</table>
 
 A nil is followed through branches and loops in the function. A nil check on the way stops it:
 
@@ -111,11 +189,46 @@ Fix: return `mo.Option[*T]`.
 
 A signature must not end in a `bool` after at least one other result.
 
-| Signature | Valid? | Reason |
-| --- | --- | --- |
-| `func Find() (User, bool)` | ❌ | Absence is a trailing `bool`, whatever type comes before it |
-| `func Cut() (string, string, bool)` | ❌ | The same, with several values |
-| `func IsAdmin() bool` | ✅ | Nothing comes before the `bool` |
+<table>
+<thead>
+<tr><th>Signature</th><th>Valid?</th><th>Reason</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>
+
+```go
+func Find() (User, bool)
+```
+
+</td>
+<td>❌</td>
+<td>Absence is a trailing <code>bool</code>, whatever type comes before it</td>
+</tr>
+<tr>
+<td>
+
+```go
+func Cut() (string, string, bool)
+```
+
+</td>
+<td>❌</td>
+<td>The same, with several values</td>
+</tr>
+<tr>
+<td>
+
+```go
+func IsAdmin() bool
+```
+
+</td>
+<td>✅</td>
+<td>Nothing comes before the <code>bool</code></td>
+</tr>
+</tbody>
+</table>
 
 Functions, methods, methods of named interfaces, and named function types are checked. A function literal is exempt. So is a method that implements an interface: the interface's own declaration is reported instead, when it is in the package.
 
@@ -128,22 +241,102 @@ Fix: return `mo.Option[User]`. For several values, return `mo.Option` of a struc
 
 The same as `return-bool`, with `error` in place of `bool`. It is off unless `-return-error` is set.
 
-| Signature | Valid? | Reason |
-| --- | --- | --- |
-| `func Find() (*User, error)` | ❌ | Failure is a trailing `error` |
-| `func Load() (Config, Meta, error)` | ❌ | The same, with several values |
-| `func Close() error` | ✅ | Nothing comes before the `error` |
+<table>
+<thead>
+<tr><th>Signature</th><th>Valid?</th><th>Reason</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>
+
+```go
+func Find() (*User, error)
+```
+
+</td>
+<td>❌</td>
+<td>Failure is a trailing <code>error</code></td>
+</tr>
+<tr>
+<td>
+
+```go
+func Load() (Config, Meta, error)
+```
+
+</td>
+<td>❌</td>
+<td>The same, with several values</td>
+</tr>
+<tr>
+<td>
+
+```go
+func Close() error
+```
+
+</td>
+<td>✅</td>
+<td>Nothing comes before the <code>error</code></td>
+</tr>
+</tbody>
+</table>
 
 Fix: return `mo.Result[*User]`.
 
 ### `wrap-nil`
 
-| Call | Valid? | Reason |
-| --- | --- | --- |
-| `mo.Some[*T](nil)` | ❌ | The option is present and holds nil |
-| `mo.Ok[*T](nil)` | ❌ | The result is Ok and holds nil |
-| `mo.Err[T](nil)` | ❌ | The result is an error, and its error is nil |
-| `mo.Some[[]int](nil)` | ✅ | Only pointers and interfaces count for `Some` and `Ok` |
+<table>
+<thead>
+<tr><th>Call</th><th>Valid?</th><th>Reason</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>
+
+```go
+mo.Some[*T](nil)
+```
+
+</td>
+<td>❌</td>
+<td>The option is present and holds nil</td>
+</tr>
+<tr>
+<td>
+
+```go
+mo.Ok[*T](nil)
+```
+
+</td>
+<td>❌</td>
+<td>The result is Ok and holds nil</td>
+</tr>
+<tr>
+<td>
+
+```go
+mo.Err[T](nil)
+```
+
+</td>
+<td>❌</td>
+<td>The result is an error, and its error is nil</td>
+</tr>
+<tr>
+<td>
+
+```go
+mo.Some[[]int](nil)
+```
+
+</td>
+<td>✅</td>
+<td>Only pointers and interfaces count for <code>Some</code> and <code>Ok</code></td>
+</tr>
+</tbody>
+</table>
 
 Fix: `mo.None[*T]()`, a non-nil value, or a non-nil error.
 
@@ -164,24 +357,130 @@ Fix: build it with `mo.Ok` or `mo.Err`.
 
 ### `unwrap-nil`
 
-| Call on `mo.Option[*T]` or `mo.Result[*T]` | Valid? | Reason |
-| --- | --- | --- |
-| `o.OrEmpty()` | ❌ | It gives nil when the option is empty |
-| `o.OrElse(nil)` | ❌ | The fallback is nil |
-| `o.OrElse(&guest)` | ✅ | The fallback is not nil |
-| `o.MustGet()` | ✅ | It panics rather than give nil |
-| `o.OrEmpty()` on `mo.Option[int]` | ✅ | The zero value is chosen in plain sight |
+<table>
+<thead>
+<tr><th>Call on <code>mo.Option[*T]</code> or <code>mo.Result[*T]</code></th><th>Valid?</th><th>Reason</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>
+
+```go
+o.OrEmpty()
+```
+
+</td>
+<td>❌</td>
+<td>It gives nil when the option is empty</td>
+</tr>
+<tr>
+<td>
+
+```go
+o.OrElse(nil)
+```
+
+</td>
+<td>❌</td>
+<td>The fallback is nil</td>
+</tr>
+<tr>
+<td>
+
+```go
+o.OrElse(&guest)
+```
+
+</td>
+<td>✅</td>
+<td>The fallback is not nil</td>
+</tr>
+<tr>
+<td>
+
+```go
+o.MustGet()
+```
+
+</td>
+<td>✅</td>
+<td>It panics rather than give nil</td>
+</tr>
+<tr>
+<td>
+
+```go
+var n mo.Option[int]
+n.OrEmpty()
+```
+
+</td>
+<td>✅</td>
+<td>Not a pointer. The zero value is chosen in plain sight</td>
+</tr>
+</tbody>
+</table>
 
 Fix: `Get` with a check of `ok`, or `OrElse` with a non-nil value.
 
 ### `unwrap-discard`
 
-| Call | Valid? | Reason |
-| --- | --- | --- |
-| `v, _ := o.Get()`, then `v` is used | ❌ | `ok` is discarded, whatever the type of `v` |
-| `v, _ := r.Get()` on a `mo.Result`, then `v` is used | ❌ | The error is discarded |
-| `if v, ok := o.Get(); ok { ... }` | ✅ | `ok` is checked |
-| `o.Get()` as a statement | ✅ | Nothing is used |
+<table>
+<thead>
+<tr><th>Code</th><th>Valid?</th><th>Reason</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>
+
+```go
+v, _ := o.Get()
+use(v)
+```
+
+</td>
+<td>❌</td>
+<td><code>ok</code> is discarded, whatever the type of <code>v</code></td>
+</tr>
+<tr>
+<td>
+
+```go
+var r mo.Result[int]
+v, _ := r.Get()
+use(v)
+```
+
+</td>
+<td>❌</td>
+<td>The error is discarded</td>
+</tr>
+<tr>
+<td>
+
+```go
+if v, ok := o.Get(); ok {
+	use(v)
+}
+```
+
+</td>
+<td>✅</td>
+<td><code>ok</code> is checked</td>
+</tr>
+<tr>
+<td>
+
+```go
+o.Get()
+```
+
+</td>
+<td>✅</td>
+<td>Nothing is used</td>
+</tr>
+</tbody>
+</table>
 
 Fix: check `ok` or the error, or use `OrElse`.
 
