@@ -59,7 +59,14 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 
 molint and nilaway do not exclude each other. molint stops the ways of writing that make a nil. nilaway finds the nils that still reach a dereference. So a rule that needs to follow values across functions belongs to nilaway, not here.
 
-A sample of 15 cases, with samber/mo v1.17.0 and nilaway `v0.0.0-20260918162853-acb8859b9031`, gave this. ✅ means the result is valid: the tool reports a nil that can happen, or stays silent where none can. ❌ means it misses one. Neither tool gave a false report.
+A sample of 15 cases gave the table below. It used samber/mo v1.17.0 and nilaway `v0.0.0-20260918162853-acb8859b9031`.
+
+| Mark | Meaning |
+| --- | --- |
+| ✅ | Valid: the tool reports a nil that can happen, or stays silent where none can |
+| ❌ | Missed: the tool is silent about a nil that can happen |
+
+Neither tool gave a false report.
 
 | Case | molint | nilaway |
 | --- | --- | --- |
