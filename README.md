@@ -81,14 +81,14 @@ Nothing is reported in a generated file. Test files are checked like any other f
 
 A return must not give a nil pointer.
 
-| Return | Reported |
+| Return | Valid |
 | --- | --- |
-| `return nil` in `func F() *T` | Yes |
-| `var p *T; return p` | Yes |
-| `return nil, nil` in `func F() (*T, error)` | Yes |
-| `return nil, err` in `func F() (*T, error)` | No. The error is not nil |
-| `return nil, false` in `func F() (*T, bool)` | No. `return-bool` reports the signature |
-| `return nil, true` in `func F() (*T, bool)` | Yes |
+| `return nil` in `func F() *T` | ❌ |
+| `var p *T; return p` | ❌ |
+| `return nil, nil` in `func F() (*T, error)` | ❌ |
+| `return nil, err` in `func F() (*T, error)` | ✅ The error is not nil |
+| `return nil, false` in `func F() (*T, bool)` | ✅ For this rule. `return-bool` reports the signature |
+| `return nil, true` in `func F() (*T, bool)` | ❌ |
 
 A nil is followed through branches and loops in the function. A nil check on the way stops it:
 
@@ -111,11 +111,11 @@ Fix: return `mo.Option[*T]`.
 
 A signature must not end in a `bool` after at least one other result.
 
-| Signature | Reported |
+| Signature | Valid |
 | --- | --- |
-| `func Find() (User, bool)` | Yes, whatever the type before the `bool` |
-| `func Cut() (string, string, bool)` | Yes |
-| `func IsAdmin() bool` | No. Nothing comes before the `bool` |
+| `func Find() (User, bool)` | ❌ Whatever type comes before the `bool` |
+| `func Cut() (string, string, bool)` | ❌ |
+| `func IsAdmin() bool` | ✅ Nothing comes before the `bool` |
 
 Functions, methods, methods of named interfaces, and named function types are checked. A function literal is exempt. So is a method that implements an interface: the interface's own declaration is reported instead, when it is in the package.
 
@@ -128,22 +128,22 @@ Fix: return `mo.Option[User]`. For several values, return `mo.Option` of a struc
 
 The same as `return-bool`, with `error` in place of `bool`. It is off unless `-return-error` is set.
 
-| Signature | Reported |
+| Signature | Valid |
 | --- | --- |
-| `func Find() (*User, error)` | Yes |
-| `func Load() (Config, Meta, error)` | Yes |
-| `func Close() error` | No |
+| `func Find() (*User, error)` | ❌ |
+| `func Load() (Config, Meta, error)` | ❌ |
+| `func Close() error` | ✅ |
 
 Fix: return `mo.Result[*User]`.
 
 ### `wrap-nil`
 
-| Call | Reported |
+| Call | Valid |
 | --- | --- |
-| `mo.Some[*T](nil)` | Yes: the option is present and holds nil |
-| `mo.Ok[*T](nil)` | Yes |
-| `mo.Err[T](nil)` | Yes: the result is an error, and its error is nil |
-| `mo.Some[[]int](nil)` | No. Only pointers and interfaces count for `Some` and `Ok` |
+| `mo.Some[*T](nil)` | ❌ The option is present and holds nil |
+| `mo.Ok[*T](nil)` | ❌ |
+| `mo.Err[T](nil)` | ❌ The result is an error, and its error is nil |
+| `mo.Some[[]int](nil)` | ✅ Only pointers and interfaces count for `Some` and `Ok` |
 
 Fix: `mo.None[*T]()`, a non-nil value, or a non-nil error.
 
@@ -164,24 +164,24 @@ Fix: build it with `mo.Ok` or `mo.Err`.
 
 ### `unwrap-nil`
 
-| Call on `mo.Option[*T]` or `mo.Result[*T]` | Reported |
+| Call on `mo.Option[*T]` or `mo.Result[*T]` | Valid |
 | --- | --- |
-| `o.OrEmpty()` | Yes: it gives nil when the option is empty |
-| `o.OrElse(nil)` | Yes |
-| `o.OrElse(&guest)` | No |
-| `o.MustGet()` | No. It panics rather than give nil |
-| `o.OrEmpty()` on `mo.Option[int]` | No. The zero value is chosen in plain sight |
+| `o.OrEmpty()` | ❌ It gives nil when the option is empty |
+| `o.OrElse(nil)` | ❌ |
+| `o.OrElse(&guest)` | ✅ |
+| `o.MustGet()` | ✅ It panics rather than give nil |
+| `o.OrEmpty()` on `mo.Option[int]` | ✅ The zero value is chosen in plain sight |
 
 Fix: `Get` with a check of `ok`, or `OrElse` with a non-nil value.
 
 ### `unwrap-discard`
 
-| Call | Reported |
+| Call | Valid |
 | --- | --- |
-| `v, _ := o.Get()`, then `v` is used | Yes, whatever the type |
-| `v, _ := r.Get()` on a `mo.Result`, then `v` is used | Yes: the error is discarded |
-| `if v, ok := o.Get(); ok { ... }` | No |
-| `o.Get()` as a statement | No. Nothing is used |
+| `v, _ := o.Get()`, then `v` is used | ❌ Whatever the type of `v` |
+| `v, _ := r.Get()` on a `mo.Result`, then `v` is used | ❌ The error is discarded |
+| `if v, ok := o.Get(); ok { ... }` | ✅ |
+| `o.Get()` as a statement | ✅ Nothing is used |
 
 Fix: check `ok` or the error, or use `OrElse`.
 
