@@ -150,7 +150,7 @@ func F() (*T, bool) {
 
 </td>
 <td>⚠️</td>
-<td>Not reported by this rule. <code>return-bool</code> reports the signature</td>
+<td>Not reported by this rule. <a href="#return-bool"><code>return-bool</code></a> reports the signature</td>
 </tr>
 <tr>
 <td>
@@ -176,7 +176,7 @@ func F() (T, bool) {
 
 </td>
 <td>⚠️</td>
-<td>Not a pointer, so not reported by this rule. <code>return-bool</code> reports the signature</td>
+<td>Not a pointer, so not reported by this rule. <a href="#return-bool"><code>return-bool</code></a> reports the signature</td>
 </tr>
 <tr>
 <td>
@@ -294,7 +294,7 @@ For several values, use a struct, or a tuple of [samber/lo](https://github.com/s
 
 ### `return-error`
 
-The same as `return-bool`, with `error` in place of `bool`. It is off unless `-return-error` is set.
+The same as [`return-bool`](#return-bool), with `error` in place of `bool`. It is off unless `-return-error` is set.
 
 <table>
 <thead>
