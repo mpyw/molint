@@ -63,7 +63,7 @@ go vet -vettool=$(which molint) ./...        # through go vet, with its cache
 | [`return-error`](#return-error) | 🔴 Off | A signature that ends in an `error` after other results |
 | [`wrap-nil`](#wrap-nil) | 🟢 On | nil given to `mo.Some`, `mo.Ok`, or `mo.Err` |
 | [`result-zero`](#result-zero) | 🟢 On | A zero `mo.Result` |
-| [`unwrap-nil`](#unwrap-nil) | 🟢 On | `OrEmpty`, or `OrElse(nil)`, where the nil breaks on use: a pointer, an interface, a map, a func or a channel |
+| [`unwrap-nil`](#unwrap-nil) | 🟢 On | `OrEmpty`, or `OrElse(nil)`, where the nil breaks on use:<br>pointer, interface, `map`, `func` or `chan` |
 | [`unwrap-discard`](#unwrap-discard) | 🟢 On | `Get` with its `ok` or its error discarded |
 
 The line between them: absence must not be dropped silently. A trailing `bool` and a discarded `ok` drop it silently, whatever the type. `OrEmpty` and `OrElse` choose a default in plain sight. That is fine, unless the default is nil.
