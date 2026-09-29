@@ -165,6 +165,45 @@ func F() (*T, bool) {
 <td>❌</td>
 <td><code>ok</code> says the value is there, but it is nil</td>
 </tr>
+<tr>
+<td>
+
+```go
+func F() (T, bool) {
+	return T{}, false
+}
+```
+
+</td>
+<td>⚠️</td>
+<td>Not a pointer, so not reported by this rule. <code>return-bool</code> reports the signature</td>
+</tr>
+<tr>
+<td>
+
+```go
+func F() (T, error) {
+	return T{}, nil
+}
+```
+
+</td>
+<td>✅</td>
+<td>Not a pointer, so this rule does not apply</td>
+</tr>
+<tr>
+<td>
+
+```go
+func F() []T {
+	return nil
+}
+```
+
+</td>
+<td>✅</td>
+<td>A slice is not a pointer. A nil slice works as an empty one</td>
+</tr>
 </tbody>
 </table>
 
