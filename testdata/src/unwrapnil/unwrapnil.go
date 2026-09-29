@@ -36,12 +36,24 @@ func OrEmptyInt(o mo.Option[int]) {
 	use(o.OrEmpty())
 }
 
-// Not reported: an interface is not a pointer.
+// A nil interface, map, func or channel breaks on use too.
 func OrEmptyInterface(o mo.Option[error]) {
-	use(o.OrEmpty())
+	use(o.OrEmpty()) // want `^OrEmpty on mo\.Option\[error\] gives nil when it is empty; use Get and check ok, or OrElse with a non-nil value \[unwrap-nil\]$`
 }
 
-// Not reported: a slice is not a pointer.
+func OrEmptyMap(o mo.Option[map[string]int]) {
+	use(o.OrEmpty()) // want `^OrEmpty on mo\.Option\[map\[string\]int\] gives nil when it is empty; use Get and check ok, or OrElse with a non-nil value \[unwrap-nil\]$`
+}
+
+func OrEmptyFunc(o mo.Option[func()]) {
+	use(o.OrEmpty()) // want `^OrEmpty on mo\.Option\[func\(\)\] gives nil when it is empty; use Get and check ok, or OrElse with a non-nil value \[unwrap-nil\]$`
+}
+
+func OrEmptyChan(r mo.Result[chan int]) {
+	use(r.OrEmpty()) // want `^OrEmpty on mo\.Result\[chan int\] gives nil when it is an error; use Get and check the error, or OrElse with a non-nil value \[unwrap-nil\]$`
+}
+
+// Not reported: a nil slice works as an empty one.
 func OrEmptySlice(o mo.Option[[]int]) {
 	use(o.OrEmpty())
 }
@@ -160,12 +172,20 @@ func OrElseDefaulted(o mo.Option[*T], c bool) {
 	use(o.OrElse(def))
 }
 
-// Not reported: a nil default of a type that is not a pointer.
 func OrElseNilInterface(o mo.Option[error]) {
-	use(o.OrElse(nil))
+	use(o.OrElse(nil)) // want `^OrElse\(nil\) on mo\.Option\[error\] gives nil when it is empty; pass a non-nil value \[unwrap-nil\]$`
 }
 
-// Not reported: the same for a slice.
+func OrElseNilMap(o mo.Option[map[string]int]) {
+	use(o.OrElse(nil)) // want `^OrElse\(nil\) on mo\.Option\[map\[string\]int\] gives nil when it is empty; pass a non-nil value \[unwrap-nil\]$`
+}
+
+// Not reported: a made map is not nil.
+func OrElseMadeMap(o mo.Option[map[string]int]) {
+	use(o.OrElse(map[string]int{}))
+}
+
+// Not reported: a nil slice works as an empty one.
 func OrElseNilSlice(o mo.Option[[]int]) {
 	use(o.OrElse(nil))
 }

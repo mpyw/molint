@@ -175,14 +175,14 @@ Message: `a zero mo.Result[T] is Ok with a zero value; build it with mo.Ok or mo
 
 ## `unwrap-nil`
 
-These calls must not be made on an `Option[T]` or a `Result[T]` whose `T` is a pointer:
+These calls must not be made on an `Option[T]` or a `Result[T]` whose nil breaks on use. That is a `T` that is a pointer, an interface, a map, a func or a channel, as for [`wrap-nil`](#wrap-nil):
 
 | Call | Reported when |
 | --- | --- |
 | `o.OrEmpty()` | Always |
 | `o.OrElse(v)` | `v` is a nil value |
 
-`o.MustGet()` is not reported: it panics rather than give nil. A `T` that is not a pointer is not reported: `OrEmpty` then chooses the zero value in plain sight.
+`o.MustGet()` is not reported: it panics rather than give nil. Any other `T` is not reported, a slice included: `OrEmpty` then chooses a zero value that works, in plain sight.
 
 Message: `OrEmpty on mo.Option[*T] gives nil when it is empty; use Get and check ok, or OrElse with a non-nil value [unwrap-nil]`. For `OrElse`: `OrElse(nil) on mo.Option[*T] gives nil when it is empty; pass a non-nil value [unwrap-nil]`. For a `Result`, the messages are these:
 
