@@ -1,38 +1,46 @@
 # molint
 
-Go linter that forbids returning a pointer it cannot prove to be non-nil.
+Go linter that enforces [samber/mo](https://github.com/samber/mo): absence is `mo.Option`, not a nil pointer or a trailing `bool`.
 
 > [!WARNING]
-> Work in progress. This rule is strict on purpose. It is meant for new applications, not for libraries.
+> Work in progress. The rules are strict on purpose. They are meant for applications that choose samber/mo, not for libraries.
 
 ## Overview
 
-A nil pointer returned where a value was expected fails far from where it was made. molint does not look for nil. It asks every return of a pointer for a proof that the pointer is not nil. A return without one is reported.
-
-Where a value may be absent, put the absence in the type. Return `mo.Option[*T]` from [samber/mo](https://github.com/samber/mo) instead of a nil pointer.
-
 ```go
-func Lookup(name string) *User {
-	return users[name]
-}
-
-func Find(name string) (*User, error) {
+func Find(name string) *User {
 	u, ok := users[name]
 	if !ok {
-		return nil, nil
+		return nil
 	}
-	return u, nil
+	return u
+}
+
+func Lookup(name string) (*User, bool) {
+	u, ok := users[name]
+	return u, ok
+}
+
+func Guest(o mo.Option[*User]) *User {
+	return o.OrEmpty()
 }
 ```
 
 ```console
 $ molint ./...
-user.go:16:2: Lookup may return a nil *User, from a map lookup; return mo.Option[*User] where absence is expected
-user.go:22:3: Find may return a nil *User with a nil error, from a nil constant; return an error, or mo.Option[*User], where absence is expected
-user.go:24:2: Find may return a nil *User with a nil error, from a map lookup; return an error, or mo.Option[*User], where absence is expected
+user.go:12:3: Find returns a nil *User; return mo.Option[*User] instead [return-nil]
+user.go:17:6: Lookup reports absence with a trailing bool; return mo.Option[*User] instead [return-bool]
+user.go:23:18: OrEmpty on mo.Option[*User] gives nil when it is empty; use Get and check ok, or OrElse with a non-nil value [unwrap-nil]
 ```
 
-Each report names the value where the proof stopped. That is where the nil may come from.
+Every report ends with the name of its rule. That name is what `//molint:ignore` takes.
+
+molint reads the shape of signatures, and follows values only inside one function. It does not look for nil panics. Use it beside [nilaway](https://github.com/uber-go/nilaway):
+
+| Tool | Job | Reads |
+| --- | --- | --- |
+| nilaway | Finds possible nil panics | The flow of values across functions |
+| molint | Enforces the use of `mo.Option` and `mo.Result` | The shape of signatures and code |
 
 ## Install
 
@@ -42,106 +50,183 @@ Each report names the value where the proof stopped. That is where the nil may c
 | `go install` | `go install github.com/mpyw/molint/cmd/molint@latest` | Go 1.27+ |
 
 ```bash
-molint ./...          # or: go tool molint ./...
+molint ./...                                 # or: go tool molint ./...
+go vet -vettool=$(which molint) ./...        # through go vet, with its cache
 ```
 
-> [!TIP]
-> On a large module, run it through `go vet`. Every dependency is analyzed too, so that a constructor in another package is proven where it is called. Run on its own, the tool holds all of that in one process. On one application, it peaked at 4.6GB alone and at 0.7GB through `go vet`.
->
-> ```bash
-> go vet -vettool=$(which molint) ./...
-> ```
+## Rules
 
-## What counts as proof
+| Rule | Default | Reports |
+| --- | --- | --- |
+| [`return-nil`](#return-nil) | On | A nil pointer result |
+| [`return-bool`](#return-bool) | On | A signature that ends in a `bool` after other results |
+| [`return-error`](#return-error) | **Off** | A signature that ends in an `error` after other results |
+| [`wrap-nil`](#wrap-nil) | On | nil given to `mo.Some`, `mo.Ok`, or `mo.Err` |
+| [`result-zero`](#result-zero) | On | A zero `mo.Result` |
+| [`unwrap-nil`](#unwrap-nil) | On | `OrEmpty`, or `OrElse(nil)`, on an Option or a Result of a pointer |
+| [`unwrap-discard`](#unwrap-discard) | On | `Get` with its `ok` or its error discarded |
 
-A pointer is proven non-nil when it is one of these:
+The line between them: absence must not be dropped silently. A trailing `bool` and a discarded `ok` drop it silently, whatever the type. `OrEmpty` and `OrElse` choose a default in plain sight. That is fine, unless the default is nil.
 
-| Value | Example |
-| --- | --- |
-| An address | `&User{}`, `new(User)`, `&u.Name`, `&items[i]` |
-| A value checked on the way | `if u == nil { return ... }` above the return |
-| A call to a proven function | `return NewUser(name)` |
-| A proven package-level variable | `var client = &http.Client{}`, never set to anything unproven |
-| A variable proven on every path | `u := a; if cond { u = b }` with both `a` and `b` proven |
+Each rule has a flag of its name:
 
-Anything else is not proven.
+```bash
+molint -return-error ./...         # every rule
+molint -return-bool=false ./...    # every rule except return-bool and return-error
+```
 
-| Value | Why |
-| --- | --- |
-| A parameter or a receiver | The caller may pass nil |
-| A field | Its zero value is nil |
-| A map lookup | A missing key gives nil |
-| A type assertion | A nil pointer asserts fine |
-| A call through an interface or a function value | Its body cannot be read |
+Nothing is reported in a generated file. Test files are checked like any other file.
 
-> [!NOTE]
-> Functions are proven across packages, the standard library included. A proven function publishes an analysis fact. Inside a package, functions are proven together, so mutual recursion is proven when its base cases are.
+### `return-nil`
 
-## Functions that return an error
-
-A function whose last result is an `error` may return a nil pointer beside a non-nil error. It must not return a nil pointer with a nil error.
+A return must not give a nil pointer.
 
 | Return | Reported |
 | --- | --- |
-| `return nil, err` | No |
-| `return nil, ErrNotFound` | No |
-| `return nil, nil` | **Yes** |
-| `return u, nil` with `u` unproven | **Yes** |
-| `return u, err` with both from one call | Only when the callee is not proven |
+| `return nil` in `func F() *T` | Yes |
+| `var p *T; return p` | Yes |
+| `return nil, nil` in `func F() (*T, error)` | Yes |
+| `return nil, err` in `func F() (*T, error)` | No. The error is not nil |
+| `return nil, false` in `func F() (*T, bool)` | No. `return-bool` reports the signature |
+| `return nil, true` in `func F() (*T, bool)` | Yes |
 
-An error other than the constant nil is taken as non-nil. The rule is there to catch `return nil, nil`. It does not try to prove errors.
-
-A pointer returned with an error is usable only when that error is nil. So a call's pointer result is proven only after its error is checked.
+A nil is followed through branches and loops in the function. A nil check on the way stops it:
 
 ```go
-u, err := Find(name)
-if err != nil {
-	return nil, err
+var p *T
+if c {
+	p = get()
 }
-return u, nil // proven: Find is proven, and err is checked
+if p == nil {
+	p = def
+}
+return p // not reported
 ```
 
-> [!IMPORTANT]
-> A call through an interface has no body to read. When it returns an error, it is trusted to follow the Go convention. Its pointer is taken as non-nil once its error is checked. Without an error result, there is no convention to trust.
+A function literal is exempt. So is a method that implements an interface, since the interface fixes its signature.
 
-## What is not reported
+Fix: return `mo.Option[*T]`.
 
-| Case | Why |
+### `return-bool`
+
+A signature must not end in a `bool` after at least one other result.
+
+| Signature | Reported |
 | --- | --- |
-| A generated file | It is marked `// Code generated ... DO NOT EDIT.` Its functions are still proven for their callers |
-| A function that never returns | Whatever it would return is never seen |
-| A type parameter, even `P ~*T` | It is not a pointer type |
+| `func Find() (User, bool)` | Yes, whatever the type before the `bool` |
+| `func Cut() (string, string, bool)` | Yes |
+| `func IsAdmin() bool` | No. Nothing comes before the `bool` |
+
+Functions, methods, methods of named interfaces, and named function types are checked. A function literal is exempt. So is a method that implements an interface: the interface's own declaration is reported instead, when it is in the package.
+
+Fix: return `mo.Option[User]`. For several values, return `mo.Option` of a struct, or of a tuple of [samber/lo](https://github.com/samber/lo), such as `lo.Tuple2`.
+
+> [!NOTE]
+> A method is exempt only when molint sees the interface. It must be declared in the package, or in a package that the package imports directly. `MarshalJSON` in a package that does not import `encoding/json` is not exempt.
+
+### `return-error`
+
+The same as `return-bool`, with `error` in place of `bool`. It is off unless `-return-error` is set.
+
+| Signature | Reported |
+| --- | --- |
+| `func Find() (*User, error)` | Yes |
+| `func Load() (Config, Meta, error)` | Yes |
+| `func Close() error` | No |
+
+Fix: return `mo.Result[*User]`.
+
+### `wrap-nil`
+
+| Call | Reported |
+| --- | --- |
+| `mo.Some[*T](nil)` | Yes: the option is present and holds nil |
+| `mo.Ok[*T](nil)` | Yes |
+| `mo.Err[T](nil)` | Yes: the result is an error, and its error is nil |
+| `mo.Some[[]int](nil)` | No. Only pointers and interfaces count for `Some` and `Ok` |
+
+Fix: `mo.None[*T]()`, a non-nil value, or a non-nil error.
+
+### `result-zero`
+
+A zero `mo.Result` is Ok, holding the zero value of its type. It must not be used.
+
+```go
+func Load() mo.Result[Config] {
+	var r mo.Result[Config]
+	return r // reported
+}
+```
+
+A return, an argument, a store, a send, and a method call are uses. A comparison is not. A zero `mo.Option` is None, which is fine, so it is not reported.
+
+Fix: build it with `mo.Ok` or `mo.Err`.
+
+### `unwrap-nil`
+
+| Call on `mo.Option[*T]` or `mo.Result[*T]` | Reported |
+| --- | --- |
+| `o.OrEmpty()` | Yes: it gives nil when the option is empty |
+| `o.OrElse(nil)` | Yes |
+| `o.OrElse(&guest)` | No |
+| `o.MustGet()` | No. It panics rather than give nil |
+| `o.OrEmpty()` on `mo.Option[int]` | No. The zero value is chosen in plain sight |
+
+Fix: `Get` with a check of `ok`, or `OrElse` with a non-nil value.
+
+### `unwrap-discard`
+
+| Call | Reported |
+| --- | --- |
+| `v, _ := o.Get()`, then `v` is used | Yes, whatever the type |
+| `v, _ := r.Get()` on a `mo.Result`, then `v` is used | Yes: the error is discarded |
+| `if v, ok := o.Get(); ok { ... }` | No |
+| `o.Get()` as a statement | No. Nothing is used |
+
+Fix: check `ok` or the error, or use `OrElse`.
 
 ## Ignoring a report
 
-Write `//molint:ignore` on the reported line or the line above it. A reason after `//` is required.
+Write `//molint:ignore` with the rules to silence and a reason after `//`.
 
 ```go
-func proxy(*http.Request) (*url.URL, error) {
-	//molint:ignore // net/http reads nil, nil as "no proxy"
-	return nil, nil
-}
+//molint:ignore return-bool // callers rely on the comma-ok form
+func Lookup(name string) (*User, bool) {
 ```
+
+| Placement | Silences |
+| --- | --- |
+| On a line of its own | The line below |
+| After code | Its own line |
 
 | Directive | Result |
 | --- | --- |
-| `//molint:ignore // reason` | Silences the report |
-| `//molint:ignore` | Reported: the reason is missing |
-| `//molint:ignore reason` | Reported: text outside `//` is an argument, and it takes none |
-| An ignore that silences nothing | Reported as unused |
+| `//molint:ignore return-nil, wrap-nil // reason` | Silences both rules |
+| `//molint:ignore // reason` | Silences every rule |
+| No reason | Reported, and silences nothing |
+| An unknown rule name | Reported |
+| An ignore that silences nothing | Reported as unused, unless every rule it names is turned off |
 
-> [!NOTE]
-> An ignore silences the report only. The function is still not proven, so a caller that relies on it is reported in turn.
+## Limits
 
-## Fixing a report
+These are not checked:
 
-molint offers no automatic fix. Most fixes change a signature, which breaks callers in other packages.
-
-| The nil means | Return instead |
+| Case | Why |
 | --- | --- |
-| The value may be absent, and that is normal | `mo.Option[*T]` |
-| The value is absent, and that is a failure | A non-nil error |
-| The value is always there | A proven value: a fresh one, or one checked on the way |
+| A nil from a parameter, a field, or a call | Values are followed only inside one function. nilaway follows them further |
+| `mo.TupleToOption`, `mo.TupleToResult`, `mo.EmptyableToOption` | They check their arguments at run time |
+| A zero `mo.Result` left out of a composite literal, as in `Holder{}` | Fields are not followed |
+| A constructor or method of mo passed as a function value | Calls through function values are not followed |
+
+These are reported although no run returns nil, since branches are taken as independent:
+
+| Case | Instead |
+| --- | --- |
+| `if c { p = x }; if c { return p }` | Keep the value and its condition together, as in `mo.Option` |
+| The pointer and the error set on separate branches, then `if err != nil { return nil, err }; return u, nil` | Return from each branch |
+| A retry loop that ends with `return nil, err` | Start the error at a sentinel, so that no round leaves it nil |
+
+The full specification, with every limit, is [design/rules.md](design/rules.md).
 
 ## License
 

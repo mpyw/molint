@@ -1,0 +1,238 @@
+// Pairing along stores: return-nil for a bare return that loads its results.
+// See "return-nil" in design/rules.md.
+//
+// A function with a defer stores its results into local variables, runs its
+// defers, then loads them. A bare return stores nothing, so both loads follow
+// the stores reaching them. The pointer and the error are paired along each
+// path back to those stores: both results are read on the same path. This is
+// what internal/flow/pair.go (pairStores) does.
+//
+// The program:
+//
+//   func F() (u *T, err error) {  each Alloc is a store of the zero value
+//     defer mu.Unlock()
+//     u = U0; err = E0            each may be left out
+//     for ... {                   the loop is there or not (looped)
+//       switch {                  three arms; each may store into u, into
+//       case c0: u, err = ...     err, into both, or into neither
+//       case c1: ...
+//       default: ...
+//       }
+//     }
+//     return                      loads u and err
+//   }
+//
+// The stores into u are nil, &T{} or f(). The stores into err are Bad (the
+// nil constant), Good (errors.New) or Out (f()). With a trailing bool in
+// place of the error, Bad is `true`, Good is `false`, and the zero of the
+// Alloc is Good rather than Bad (isBool).
+//
+// The rule, reported below: some path back from the return meets, for each
+// result, a last store that is a nil constant (or the zero) and a Bad
+// constant. Without the loop a path goes through one arm. With the loop it
+// goes through any number, and the last store of u and of err may come from
+// different rounds. Two rounds are enough to reach any such pair: the round
+// of the last store of one result, then the round of the other. So the rule
+// looks at paths through at most two arms. pairStores walks the blocks
+// backwards and gets the same answer.
+//
+// The claim:
+//
+//   ReportMeansNilWithBad   when reported, the witness run returns the nil
+//                           constant with a Bad constant
+//   NilWithBadIsReported    whenever a run returns them, it is reported
+//
+// The witness run takes the arms of the path the rule found, in order.
+//
+// ASSUME-1: the branches and the loop test independent conditions, as the
+//   rules take them. nil_value_correlated.fsl documents the gap.
+// ASSUME-2: nothing but loads and stores uses u or err. An escaped result is
+//   not followed; local_store.fsl covers that.
+// ASSUME-3 (representation only): a value is tracked by the store that made
+//   it. A value from outside is never a constant, so its run-time value does
+//   not matter to either claim.
+spec PairingStores {
+  enum UStore { UKeep, UNil, UAlloc, UExt }
+  enum EStore { EKeep, EBad, EGood, EOut }
+  enum Pc { Ready, Judged, Loop, Left, Returned }
+  // An arm, or 3: no arm (the entry's store, or no round at all).
+  type Step = 0..3
+  type Arm = 0..2
+  type Rounds = 0..2
+  type Bit = 0..17
+
+  state {
+    pc: Pc,
+    ch: Map<Bit, Bool>,
+    // the program
+    u0: UStore, e0: EStore, us: Map<Arm, UStore>, es: Map<Arm, EStore>,
+    looped: Bool, isBool: Bool,
+    // the verdict and its witness path
+    rep: Bool, wx: Step, wy: Step,
+    // the run: which store each result holds, and which came last
+    uSrc: Step, eSrc: Step, uLater: Bool, lastArm: Step, rounds: Rounds, follow: Bool
+  }
+
+  def pickU(i: Bit) =
+    if ch[i] then (if ch[i + 1] then UKeep else UNil) else (if ch[i + 1] then UAlloc else UExt)
+  def pickE(i: Bit) =
+    if ch[i] then (if ch[i + 1] then EKeep else EBad) else (if ch[i + 1] then EGood else EOut)
+
+  init {
+    pc = Ready
+    u0 = pickU(0)  e0 = pickE(2)
+    forall k: Arm { us[k] = pickU(4 + 4 * k)  es[k] = pickE(6 + 4 * k) }
+    looped = ch[16]  isBool = ch[17]
+    rep = false  wx = 3  wy = 3
+    uSrc = 3  eSrc = 3  uLater = false  lastArm = 3  rounds = 0  follow = false
+  }
+
+  // --- the rule -------------------------------------------------------------------
+
+  // What a store gives. UKeep and EKeep at the entry stand for the Alloc's zero.
+  def uNil(s: UStore) = s == UKeep or s == UNil
+  def eBad(s: EStore) = s == EBad or (s == EKeep and not isBool)
+  // The last store of each result on the path x, then y.
+  def finU(x: Step, y: Step) =
+    if y != 3 and us[y] != UKeep then us[y] else if x != 3 and us[x] != UKeep then us[x] else u0
+  def finE(x: Step, y: Step) =
+    if y != 3 and es[y] != EKeep then es[y] else if x != 3 and es[x] != EKeep then es[x] else e0
+  def path(x: Step, y: Step) = if looped then (x == 3 => y == 3) else (x != 3 and y == 3)
+  def pairs(x: Step, y: Step) = path(x, y) and uNil(finU(x, y)) and eBad(finE(x, y))
+  def reported() = exists x: Step { exists y: Step { pairs(x, y) } }
+
+  def firstX() =
+    if exists y: Step { pairs(0, y) } then 0 else if exists y: Step { pairs(1, y) } then 1
+    else if exists y: Step { pairs(2, y) } then 2 else 3
+  def firstY(x: Step) = if pairs(x, 0) then 0 else if pairs(x, 1) then 1 else if pairs(x, 2) then 2 else 3
+  def len(x: Step, y: Step) = (if x != 3 then 1 else 0) + (if y != 3 then 1 else 0)
+
+  action judge() {
+    requires pc == Ready
+    pc = Judged
+    rep = reported()  wx = firstX()  wy = firstY(firstX())
+  }
+
+  // --- the run --------------------------------------------------------------------
+
+  action enter() {
+    requires pc == Judged
+    pc = Loop
+    follow = rep
+  }
+
+  action round(k: Arm) {
+    requires pc == Loop  requires looped or rounds == 0
+    uSrc = if us[k] != UKeep then k else uSrc
+    eSrc = if es[k] != EKeep then k else eSrc
+    uLater = if us[k] != UKeep and es[k] == EKeep then true
+             else if es[k] != EKeep and us[k] == UKeep then false
+             else if us[k] != UKeep and es[k] != EKeep then false
+             else uLater
+    lastArm = k
+    rounds = min(rounds + 1, 2)
+    follow = follow and rounds < len(wx, wy) and (if rounds == 0 then k == wx else k == wy)
+  }
+
+  action leave() {
+    requires pc == Loop  requires looped or rounds == 1
+    pc = Left
+    follow = follow and rounds == len(wx, wy)
+  }
+
+  action ret() {
+    requires pc == Left
+    pc = Returned
+  }
+
+  terminal { pc == Returned }
+
+  def curU() = if uSrc == 3 then u0 else us[uSrc]
+  def curE() = if eSrc == 3 then e0 else es[eSrc]
+
+  // --- what is proved -------------------------------------------------------------
+
+  invariant ReportMeansNilWithBad {
+    (follow and pc == Returned) => (uNil(curU()) and eBad(curE()))
+  }
+  invariant NilWithBadIsReported {
+    (pc == Returned and uNil(curU()) and eBad(curE())) => reported()
+  }
+
+  // --- auxiliary ------------------------------------------------------------------
+
+  invariant VerdictFixed {
+    pc != Ready => (rep == reported() and wx == firstX() and wy == firstY(firstX()))
+  }
+  invariant FreshBeforeRun {
+    (pc == Ready or pc == Judged) => (uSrc == 3 and eSrc == 3 and rounds == 0 and not follow)
+  }
+  invariant FollowOnlyWhenReported { follow => rep }
+  invariant WitnessInOrder {
+    (follow and pc != Ready and pc != Judged) => (
+      rounds <= len(wx, wy)
+      and (rounds == 1 => (curU() == finU(wx, 3) and curE() == finE(wx, 3)))
+      and (rounds == 2 => (curU() == finU(wx, wy) and curE() == finE(wx, wy)))
+      and (pc != Loop => rounds == len(wx, wy))
+      and (rounds == 0 => (curU() == u0 and curE() == e0))
+    )
+  }
+  invariant WitnessPath { rep => path(wx, wy) }
+  // What the run's stores say about the path of at most two arms that gives
+  // the same pair: the arm of the earlier last store, then the later one.
+  invariant SourcesStore {
+    (uSrc != 3 => us[uSrc] != UKeep) and (eSrc != 3 => es[eSrc] != EKeep)
+    and ((uSrc == 3 and eSrc != 3) => us[eSrc] == UKeep)
+    and ((eSrc == 3 and uSrc != 3) => es[uSrc] == EKeep)
+    and ((uSrc != 3 and eSrc != 3 and uSrc != eSrc) =>
+          (if uLater then es[uSrc] == EKeep else us[eSrc] == UKeep))
+  }
+  // The path of at most two arms that gives what the run holds: the arm of
+  // the earlier last store, then the later one.
+  def sx() =
+    if uSrc == 3 and eSrc == 3 then lastArm else if uSrc == 3 then eSrc
+    else if eSrc == 3 or uSrc == eSrc then uSrc else (if uLater then eSrc else uSrc)
+  def sy() = if uSrc == 3 or eSrc == 3 or uSrc == eSrc then 3 else (if uLater then uSrc else eSrc)
+  invariant Realizable {
+    (pc == Loop or pc == Left or pc == Returned) =>
+      (curU() == finU(sx(), sy()) and curE() == finE(sx(), sy())
+       and ((pc != Loop or rounds >= 1) => path(sx(), sy())))
+  }
+  invariant LastArmKeptBoth {
+    (rounds >= 1 => lastArm != 3) and (rounds == 0 => lastArm == 3)
+    and ((uSrc == 3 and eSrc == 3 and lastArm != 3) => (us[lastArm] == UKeep and es[lastArm] == EKeep))
+  }
+  invariant OneArmUnlessLooped {
+    not looped => (
+      rounds <= 1 and (uSrc == 3 or eSrc == 3 or uSrc == eSrc)
+      and ((pc == Left or pc == Returned) => rounds == 1)
+    )
+  }
+  invariant ZeroRoundsHoldTheEntry {
+    ((pc == Loop or pc == Left or pc == Returned) and rounds == 0) => (uSrc == 3 and eSrc == 3)
+  }
+
+  // --- witnesses ------------------------------------------------------------------
+
+  // if c { u = x } else { err = e }; return: each path stores one result.
+  reachable ArmsKeptApart {
+    pc == Returned and not reported() and not looped and not isBool
+    and u0 == UKeep and e0 == EKeep
+    and us[0] == UAlloc and es[0] == EKeep and us[1] == UKeep and es[1] == EGood
+    and us[2] == UAlloc and es[2] == EGood
+  }
+  // An arm that stores neither lets both zeros through: nil with a nil error.
+  reachable BothZerosThroughAnArm {
+    pc == Returned and reported() and follow and not looped and not isBool
+    and us[wx] == UKeep and es[wx] == EKeep
+  }
+  // The loop pairs a nil stored in one round with a nil error stored in the
+  // next, which no single arm does.
+  reachable PairAcrossRounds {
+    pc == Returned and follow and looped and wy != 3 and not pairs(wx, 3) and not pairs(wy, 3)
+  }
+  // With a bool, the zero of the Alloc is false: nothing to pair.
+  reachable BoolZeroIsFalse {
+    pc == Returned and not reported() and isBool and uNil(curU()) and e0 == EKeep and eSrc == 3
+  }
+}

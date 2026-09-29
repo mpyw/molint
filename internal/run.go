@@ -1,15 +1,9 @@
-// Package internal implements the molint analysis.
+// Package internal implements the molint rules.
 //
-// The analysis does not look for nil. It asks each return of a pointer for a
-// proof that the pointer is not nil, and reports the returns that have none.
-// A proof is built from what cannot be nil: an address, a nil check on the
-// way, or a call to a function that is itself proven. Anything else, a
-// parameter, a field, a map lookup, an unknown call, is unproven.
-//
-// Each function is summarized by the pointer results it proves. Summaries
-// cross package boundaries as analysis facts, and inside a package they are
-// computed to a fixpoint, so that a constructor or a recursive helper is
-// proven wherever it is called.
+// Each rule has its own file. They share one pass's state, in checker.go:
+// the directives, the files that are generated, and the methods that
+// implement an interface. The questions they ask of types and of SSA values
+// live in the packages below this one.
 package internal
 
 import (
@@ -17,6 +11,7 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/buildssa"
+	"golang.org/x/tools/go/ssa"
 )
 
 // ErrRunWithoutSSA is returned by Run when the pass carries no buildssa
@@ -24,26 +19,43 @@ import (
 var ErrRunWithoutSSA = errors.New("molint: buildssa result missing")
 
 // Run analyzes one package.
-func Run(pass *analysis.Pass) (any, error) {
+func Run(pass *analysis.Pass, cfg Config) (any, error) {
 	info, ok := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
 	if !ok {
 		return nil, ErrRunWithoutSSA
 	}
-	c := newChecker(pass)
+	c := newChecker(pass, cfg)
 	for _, p := range c.directives.Problems() {
-		pass.Report(analysis.Diagnostic{Pos: p.Pos, Message: p.Message})
+		c.reportf(p.Pos, p.Message)
 	}
-	c.buildSummaries(info.SrcFuncs, info.Pkg)
-	c.exportSummaries()
-	c.exportGlobals()
-	for _, fn := range info.SrcFuncs {
-		c.reportFunc(fn)
+	c.checkShapes()
+	for _, fn := range runFuncs(info) {
+		// Nothing is reported in a generated file, so it is not analyzed.
+		if c.inGenerated(fn.Pos()) {
+			continue
+		}
+		c.checkReturnNil(fn)
+		c.checkCalls(fn)
+		c.checkResultZero(fn)
 	}
 	// Every function the pass reports on is seen in full, in a package's
 	// test variant as in the ordinary one, so an ignore that silenced
 	// nothing here silences nothing anywhere.
-	for _, pos := range c.directives.Unused() {
-		pass.Reportf(pos, "unused molint:ignore directive")
+	for _, pos := range c.directives.Unused(cfg.On) {
+		c.reportf(pos, "unused molint:ignore directive")
 	}
+	c.flush()
 	return nil, nil
+}
+
+// runFuncs lists the functions of the package with a body: the source
+// functions, and the function literals in them.
+func runFuncs(info *buildssa.SSA) []*ssa.Function {
+	var out []*ssa.Function
+	for _, fn := range info.SrcFuncs {
+		if fn.Blocks != nil {
+			out = append(out, fn)
+		}
+	}
+	return out
 }

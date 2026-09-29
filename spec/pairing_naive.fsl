@@ -1,61 +1,19 @@
-// When return-nil reports a nil pointer that comes with a trailing error or
-// bool. See "return-nil" in design/rules.md.
+// FAILS ON PURPOSE. This is the pairing rule that judges the pointer and
+// the error independently, and the counterexample is the reason return-nil
+// pairs them along each edge.
 //
-// A nil pointer with a trailing error is reported only when the error is also
-// a nil value. With a trailing bool, only when the bool is the constant true.
-// Both rules pair two results in the same way, so this spec models them once.
-// The second result, s, is one of:
+// The pointer is a nil value when some edge brings nil. The error is a nil
+// value when some edge brings nil. Nothing says it is the same edge:
 //
-//   Bad   the nil error (constant nil), or the constant true
-//   Good  a non-nil error (errors.New), or the constant false
-//   Out   a value from outside: a call's result or a parameter
+//   var u *T
+//   var err error
+//   if b { u = x } else { err = e }
+//   return u, err                 reported: "F returns a nil *T with a nil error"
 //
-// The program has two levels of joins. The inner one keeps its own φ-nodes,
-// because a statement such as log() follows it:
-//
-//   if a {
-//     if b { u, s = P0, Q0 } else { u, s = P1, Q1 }   inner join E, two edges
-//     log()
-//   } else if c {
-//     u, s = U1, S1
-//   } else {
-//     u, s = U2, S2
-//   }                                                 outer join J, three edges
-//   return u, s
-//
-// Each outer operand U0..U2, S0..S2 is a constant, a value from outside, or
-// FromE: the inner φ-node, which the first edge of J brings in the shape
-// above. Any edge may bring FromE here, since the model does not fix which.
-//
-// The rule, from design/rules.md: a return is judged along each edge into the
-// φ-node block. When both values on an edge are φ-nodes of the same earlier
-// block, the same is done there, along one edge of that block. Otherwise each
-// value is judged whole: a φ-node is a nil value when one of its edges brings
-// the constant.
-//
-// The claim. The rule reports exactly when some run returns the nil constant
-// with a Bad constant:
-//
-//   ReportMeansNilWithBad   when reported, the witness run returns nil with Bad
-//   NilWithBadIsReported    whenever a run returns nil with Bad, it is reported
-//
-// The witness run takes the edge of J the rule found, and the edge of E the
-// rule found there, or the first edge of E that gives what the rule needs.
-//
-// The program is chosen by init from free choice bits, so every program is a
-// start, and it never changes. The run then chooses the edges and the values
-// from outside.
-//
-// ASSUME-1: branches are taken as independent, as the rule defines. The gap
-//   when they correlate is documented by nil_value_correlated.fsl.
-// ASSUME-2: u and s are φ-nodes, not loads of result variables. A bare
-//   return in a function with a defer loads them; pairing_stores.fsl proves
-//   the pairing along the stores reaching those loads.
-// ASSUME-3 (representation only): the operands are constants, values from
-//   outside, or the inner φ-node. Nil checks are nil_value.fsl's subject.
-// ASSUME-4 (representation only): three edges into J and two into E. Two
-//   levels are enough for the recursion to matter.
-spec Pairing {
+// No run returns nil with a nil error. The program, the run and the claim are
+// those of pairing.fsl, except for reported() and the witness, which takes
+// the edge that brought the Bad value.
+spec PairingNaive {
   enum Op { Nil, Alloc, Ext, FromE }
   enum Sec { Bad, Good, Out, SFromE }
   enum Val { NilConst, NilExt, NonNil }
@@ -103,12 +61,13 @@ spec Pairing {
   def bothFromE(k: Edge) = u[k] == FromE and s[k] == SFromE
   def pairs(k: Edge) =
     if bothFromE(k) then (exists e: Pre { innerPairs(e) }) else (uNil(u[k]) and sBad(s[k]))
-  def reported() = exists k: Edge { pairs(k) }
+  // THE NAIVE RULE: the two results are judged apart.
+  def reported() = (exists k: Edge { uNil(u[k]) }) and (exists k: Edge { sBad(s[k]) })
 
   // The witness: the edge of J the rule judged, and the edge of E it needs.
-  def witnessEdge() = if pairs(0) then 0 else if pairs(1) then 1 else 2
+  def witnessEdge() = if sBad(s[0]) then 0 else if sBad(s[1]) then 1 else 2
   def witnessPre(k: Edge) =
-    if bothFromE(k) then (if innerPairs(0) then 0 else 1)
+    if s[k] == SFromE then (if ps[0] == Bad then 0 else 1)
     else if u[k] == FromE then (if pu[0] == Nil then 0 else 1)
     else (if ps[0] == Bad then 0 else 1)
 
@@ -156,38 +115,8 @@ spec Pairing {
     (pc == Returned and ru == NilConst and rs == BadConst) => reported()
   }
 
-  // --- auxiliary ------------------------------------------------------------------
-
-  invariant ProgramShape {
-    forall e: Pre { pu[e] != FromE and ps[e] != SFromE }
-  }
-  invariant VerdictFixed {
-    pc != Ready => (rep == reported() and wk == witnessEdge() and we == witnessPre(witnessEdge()))
-  }
-  invariant FreshBeforeRun {
-    (pc == Ready or pc == Judged) =>
-      (iu == NonNil and isv == GoodVal and ru == NonNil and rs == GoodVal and not follow)
-  }
-  invariant FollowOnlyWhenReported { follow => rep }
-  // What the inner join holds, and on which edge.
-  invariant InnerTraced {
-    pc != Ready => (
-      (iu == NilConst => innerNil()) and (isv == BadConst => innerBad())
-      and ((iu == NilConst and isv == BadConst) => exists e: Pre { innerPairs(e) })
-    )
-  }
-  invariant InnerFollowed {
-    (follow and pc == Inner) => (
-      (bothFromE(wk) => (iu == NilConst and isv == BadConst))
-      and (u[wk] == FromE => iu == NilConst) and (s[wk] == SFromE => isv == BadConst)
-    )
-  }
-  invariant ReturnedTraced {
-    pc == Returned => ((ru == NilConst and rs == BadConst) => exists k: Edge {
-      ((u[k] == Nil or (u[k] == FromE and iu == NilConst))
-       and (s[k] == Bad or (s[k] == SFromE and isv == BadConst)))
-    })
-  }
+  // The auxiliary invariants of the proved spec are left out: a failing
+  // spec needs no induction, and each must break on its claim.
 
   // --- witnesses ------------------------------------------------------------------
 

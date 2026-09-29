@@ -331,3 +331,15 @@ func InLiteral() func() mo.Option[*T] {
 		return mo.Some[*T](nil) // want `^mo\.Some is given nil; pass a non-nil value, or use mo\.None \[wrap-nil\]$`
 	}
 }
+
+// A variable of the function, given to mo.Some inside a range-over-func
+// body, holds what reached the loop.
+func SomeInRangeBody(seq func(func(int) bool)) mo.Option[*T] {
+	var p *T
+	for x := range seq {
+		if x == 0 {
+			return mo.Some(p) // want `^mo\.Some is given nil; pass a non-nil value, or use mo\.None \[wrap-nil\]$`
+		}
+	}
+	return mo.None[*T]()
+}

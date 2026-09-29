@@ -1,4 +1,4 @@
-// Command molint reports a returned pointer that is not proven non-nil.
+// Command molint enforces the use of github.com/samber/mo.
 package main
 
 import (

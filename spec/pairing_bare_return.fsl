@@ -1,0 +1,156 @@
+// FAILS ON PURPOSE. This is the pairing of a bare return that judges each
+// load on its own reaching stores, and the counterexample is the reason
+// pairing_stores.fsl reads both results on the same path.
+//
+//   func F() (u *T, err error) {
+//     defer mu.Unlock()
+//     if c { u = x } else { err = e }
+//     return                      reported: "F returns a nil *T with a nil error"
+//   }
+//
+// The load of u is reached by the zero of its Alloc through the else arm. The
+// load of err is reached by its zero through the then arm. No run returns nil
+// with a nil error.
+//
+// The program, the run and the claim are those of pairing_stores.fsl, except
+// for reported() and the witness, which takes the path that gave the error.
+spec PairingBareReturn {
+  enum UStore { UKeep, UNil, UAlloc, UExt }
+  enum EStore { EKeep, EBad, EGood, EOut }
+  enum Pc { Ready, Judged, Loop, Left, Returned }
+  // An arm, or 3: no arm (the entry's store, or no round at all).
+  type Step = 0..3
+  type Arm = 0..2
+  type Rounds = 0..2
+  type Bit = 0..17
+
+  state {
+    pc: Pc,
+    ch: Map<Bit, Bool>,
+    // the program
+    u0: UStore, e0: EStore, us: Map<Arm, UStore>, es: Map<Arm, EStore>,
+    looped: Bool, isBool: Bool,
+    // the verdict and its witness path
+    rep: Bool, wx: Step, wy: Step,
+    // the run: which store each result holds, and which came last
+    uSrc: Step, eSrc: Step, uLater: Bool, lastArm: Step, rounds: Rounds, follow: Bool
+  }
+
+  def pickU(i: Bit) =
+    if ch[i] then (if ch[i + 1] then UKeep else UNil) else (if ch[i + 1] then UAlloc else UExt)
+  def pickE(i: Bit) =
+    if ch[i] then (if ch[i + 1] then EKeep else EBad) else (if ch[i + 1] then EGood else EOut)
+
+  init {
+    pc = Ready
+    u0 = pickU(0)  e0 = pickE(2)
+    forall k: Arm { us[k] = pickU(4 + 4 * k)  es[k] = pickE(6 + 4 * k) }
+    looped = ch[16]  isBool = ch[17]
+    rep = false  wx = 3  wy = 3
+    uSrc = 3  eSrc = 3  uLater = false  lastArm = 3  rounds = 0  follow = false
+  }
+
+  // --- the rule -------------------------------------------------------------------
+
+  // What a store gives. UKeep and EKeep at the entry stand for the Alloc's zero.
+  def uNil(s: UStore) = s == UKeep or s == UNil
+  def eBad(s: EStore) = s == EBad or (s == EKeep and not isBool)
+  // The last store of each result on the path x, then y.
+  def finU(x: Step, y: Step) =
+    if y != 3 and us[y] != UKeep then us[y] else if x != 3 and us[x] != UKeep then us[x] else u0
+  def finE(x: Step, y: Step) =
+    if y != 3 and es[y] != EKeep then es[y] else if x != 3 and es[x] != EKeep then es[x] else e0
+  def path(x: Step, y: Step) = if looped then (x == 3 => y == 3) else (x != 3 and y == 3)
+  def pairs(x: Step, y: Step) = path(x, y) and uNil(finU(x, y)) and eBad(finE(x, y))
+  // THE NAIVE RULE: each load is judged on its own reaching stores.
+  def uReach(x: Step, y: Step) = path(x, y) and uNil(finU(x, y))
+  def eReach(x: Step, y: Step) = path(x, y) and eBad(finE(x, y))
+  def reported() =
+    (exists x: Step { exists y: Step { uReach(x, y) } })
+    and (exists x: Step { exists y: Step { eReach(x, y) } })
+
+  def firstX() =
+    if exists y: Step { eReach(0, y) } then 0 else if exists y: Step { eReach(1, y) } then 1
+    else if exists y: Step { eReach(2, y) } then 2 else 3
+  def firstY(x: Step) = if eReach(x, 0) then 0 else if eReach(x, 1) then 1 else if eReach(x, 2) then 2 else 3
+  def len(x: Step, y: Step) = (if x != 3 then 1 else 0) + (if y != 3 then 1 else 0)
+
+  action judge() {
+    requires pc == Ready
+    pc = Judged
+    rep = reported()  wx = firstX()  wy = firstY(firstX())
+  }
+
+  // --- the run --------------------------------------------------------------------
+
+  action enter() {
+    requires pc == Judged
+    pc = Loop
+    follow = rep
+  }
+
+  action round(k: Arm) {
+    requires pc == Loop  requires looped or rounds == 0
+    uSrc = if us[k] != UKeep then k else uSrc
+    eSrc = if es[k] != EKeep then k else eSrc
+    uLater = if us[k] != UKeep and es[k] == EKeep then true
+             else if es[k] != EKeep and us[k] == UKeep then false
+             else if us[k] != UKeep and es[k] != EKeep then false
+             else uLater
+    lastArm = k
+    rounds = min(rounds + 1, 2)
+    follow = follow and rounds < len(wx, wy) and (if rounds == 0 then k == wx else k == wy)
+  }
+
+  action leave() {
+    requires pc == Loop  requires looped or rounds == 1
+    pc = Left
+    follow = follow and rounds == len(wx, wy)
+  }
+
+  action ret() {
+    requires pc == Left
+    pc = Returned
+  }
+
+  terminal { pc == Returned }
+
+  def curU() = if uSrc == 3 then u0 else us[uSrc]
+  def curE() = if eSrc == 3 then e0 else es[eSrc]
+
+  // --- what is proved -------------------------------------------------------------
+
+  invariant ReportMeansNilWithBad {
+    (follow and pc == Returned) => (uNil(curU()) and eBad(curE()))
+  }
+  invariant NilWithBadIsReported {
+    (pc == Returned and uNil(curU()) and eBad(curE())) => reported()
+  }
+
+  // The auxiliary invariants of the proved spec are left out: a failing
+  // spec needs no induction, and each must break on its claim.
+
+  // --- witnesses ------------------------------------------------------------------
+
+  // if c { u = x } else { err = e }; return: each path stores one result.
+  reachable ArmsKeptApart {
+    pc == Returned and not reported() and not looped and not isBool
+    and u0 == UKeep and e0 == EKeep
+    and us[0] == UAlloc and es[0] == EKeep and us[1] == UKeep and es[1] == EGood
+    and us[2] == UAlloc and es[2] == EGood
+  }
+  // An arm that stores neither lets both zeros through: nil with a nil error.
+  reachable BothZerosThroughAnArm {
+    pc == Returned and reported() and follow and not looped and not isBool
+    and us[wx] == UKeep and es[wx] == EKeep
+  }
+  // The loop pairs a nil stored in one round with a nil error stored in the
+  // next, which no single arm does.
+  reachable PairAcrossRounds {
+    pc == Returned and follow and looped and wy != 3 and not pairs(wx, 3) and not pairs(wy, 3)
+  }
+  // With a bool, the zero of the Alloc is false: nothing to pair.
+  reachable BoolZeroIsFalse {
+    pc == Returned and not reported() and isBool and uNil(curU()) and e0 == EKeep and eSrc == 3
+  }
+}

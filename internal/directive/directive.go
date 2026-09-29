@@ -1,15 +1,19 @@
 // Package directive reads the //molint: comments in a package.
 //
-// One directive exists. //molint:ignore // <reason> silences a report on its
-// own line or the line below it. The reason is required, so that the next
-// reader can tell a decision from a shortcut. Any other directive is
-// reported.
+// One directive exists. //molint:ignore <rules> // <reason> silences the
+// named rules, or every rule when none is named. On a line of its own it
+// silences the line below. After code on the same line, it silences that
+// line only. The reason is required, so that the next reader can tell a
+// decision from a shortcut. Any other directive is reported.
 package directive
 
 import (
+	"bytes"
 	"go/ast"
 	"go/token"
 	"strings"
+
+	"github.com/mpyw/molint/internal/rule"
 )
 
 // tool is the tool name of every directive, as in //molint:ignore.
@@ -20,7 +24,8 @@ const tool = "molint"
 // Set is what the directives in a package say.
 type Set struct {
 	fset     *token.FileSet
-	ignores  map[string]map[int]*ignore
+	ignores  map[string]map[int][]*ignore
+	all      []*ignore
 	problems []Problem
 }
 
@@ -32,94 +37,200 @@ type Problem struct {
 
 // ignore is one ignore comment, and whether it silenced anything.
 type ignore struct {
-	pos  token.Pos
-	used bool
+	pos token.Pos
+	// rules are the rules it silences. It silences every rule when empty.
+	rules []rule.Name
+	used  bool
 }
 
-// Scan reads the directives in files. A generated file is skipped: nothing is
-// reported in it, so neither its ignores nor its problems mean anything.
-func Scan(fset *token.FileSet, files []*ast.File) *Set {
-	s := &Set{fset: fset, ignores: make(map[string]map[int]*ignore)}
+// Scan reads the directives in files. src returns the text of a file, which
+// tells a directive on a line of its own from one after code. A generated
+// file is skipped: nothing is reported in it, so neither its ignores nor its
+// problems mean anything.
+func Scan(fset *token.FileSet, files []*ast.File, src func(filename string) ([]byte, error)) *Set {
+	s := &Set{fset: fset, ignores: make(map[string]map[int][]*ignore)}
 	for _, f := range files {
-		if !ast.IsGenerated(f) {
-			s.scanFile(f)
+		if Generated(f) {
+			continue
 		}
+		name := fset.PositionFor(f.Pos(), false).Filename
+		text, _ := src(name)
+		s.scanFile(f, name, text)
 	}
 	return s
 }
 
-func (s *Set) scanFile(f *ast.File) {
+func (s *Set) scanFile(f *ast.File, name string, text []byte) {
 	// Keyed by the file and line on disk. A //line directive renames the
 	// positions below it, and two of them can give two lines one number.
-	lines := make(map[int]*ignore)
-	s.ignores[s.fset.PositionFor(f.Pos(), false).Filename] = lines
+	lines := make(map[int][]*ignore)
+	s.ignores[name] = lines
 	for _, cg := range f.Comments {
 		for _, cm := range cg.List {
-			name, args, reason, ok := parse(cm)
-			switch {
-			case !ok:
-			case name != "ignore":
-				s.problems = append(s.problems, Problem{Pos: cm.Pos(),
-					Message: "unknown directive molint:" + name})
-			case args != "":
-				s.problems = append(s.problems, Problem{Pos: cm.Pos(),
-					Message: "molint:ignore takes no argument; write the reason after //"})
-			case !reason:
-				s.problems = append(s.problems, Problem{Pos: cm.Pos(),
-					Message: "molint:ignore needs a reason after //"})
-			default:
-				lines[s.fset.PositionFor(cm.Pos(), false).Line] = &ignore{pos: cm.Pos()}
+			d, ok := parse(cm)
+			if !ok {
+				continue
 			}
+			if d.name != "ignore" {
+				s.report(cm, "unknown directive molint:"+d.name)
+				continue
+			}
+			if !d.reason {
+				s.report(cm, "molint:ignore needs a reason after //")
+				continue
+			}
+			ig := &ignore{pos: cm.Pos()}
+			known, named := s.readRules(cm, d.args, ig)
+			// An ignore whose every rule is unknown silences nothing, and
+			// is reported for its names alone.
+			if named && !known {
+				continue
+			}
+			p := s.fset.PositionFor(cm.Pos(), false)
+			target := p.Line
+			if onOwnLine(text, p.Offset) {
+				target++
+			}
+			lines[target] = append(lines[target], ig)
+			s.all = append(s.all, ig)
 		}
 	}
 }
 
-// parse returns the directive's name and arguments, and whether a reason
-// follows them, when cm is one of this tool's. The reason is a trailing
-// comment, so //molint:ignore // why and //molint:ignore//why are both an
-// ignore with a reason. Text after the name that is not behind // is an
-// argument, which the ignore does not take, so that every tool of this family
-// reads a directive the same way.
-func parse(cm *ast.Comment) (name, args string, reason, ok bool) {
+// readRules fills in the rules an ignore names, and reports the names that
+// are empty or unknown. It reports whether any name is known, and whether any
+// name is written at all.
+func (s *Set) readRules(cm *ast.Comment, args string, ig *ignore) (known, named bool) {
+	if strings.TrimSpace(args) == "" {
+		return false, false
+	}
+	empty := false
+	for _, part := range strings.Split(args, ",") {
+		part = strings.TrimSpace(part)
+		switch {
+		case part == "":
+			empty = true
+		case rule.Known(part):
+			ig.rules = append(ig.rules, rule.Name(part))
+			known = true
+		default:
+			s.report(cm, "unknown rule "+part+" in molint:ignore")
+		}
+	}
+	if empty {
+		s.report(cm, "empty rule name in molint:ignore")
+	}
+	return known, true
+}
+
+func (s *Set) report(cm *ast.Comment, msg string) {
+	s.problems = append(s.problems, Problem{Pos: cm.Pos(), Message: msg})
+}
+
+// Generated reports whether f is a generated file, which molint neither
+// reports in nor reads directives from. A file that cgo rewrote carries the
+// marker too, but its code is the user's, so it is not one.
+func Generated(f *ast.File) bool {
+	if !ast.IsGenerated(f) {
+		return false
+	}
+	for _, cg := range f.Comments {
+		if cg.Pos() > f.Package {
+			break
+		}
+		if strings.Contains(cg.Text(), "Code generated by cmd/cgo") {
+			return false
+		}
+	}
+	return true
+}
+
+// onOwnLine reports whether only blanks come before offset on its line.
+func onOwnLine(text []byte, offset int) bool {
+	if offset > len(text) {
+		return true
+	}
+	start := bytes.LastIndexByte(text[:offset], '\n') + 1
+	return len(bytes.TrimSpace(text[start:offset])) == 0
+}
+
+// directive is a parsed //molint: comment.
+type directive struct {
+	name, args string
+	// reason reports whether a non-empty reason follows the arguments.
+	reason bool
+}
+
+// parse reads cm, when it is one of this tool's directives. The reason is a
+// trailing comment, so //molint:ignore // why and //molint:ignore//why both
+// have one. The arguments are what sits between the name and the reason.
+func parse(cm *ast.Comment) (directive, bool) {
+	var d directive
 	text := cm.Text
 	if body, line := strings.CutPrefix(text, "//"); line {
 		if before, after, found := strings.Cut(body, "//"); found {
 			text = "//" + before
-			reason = strings.TrimSpace(after) != ""
+			d.reason = strings.TrimSpace(after) != ""
 		}
 	}
-	d, ok := ast.ParseDirective(cm.Slash, text)
-	if !ok || d.Tool != tool {
-		return "", "", false, false
+	pd, ok := ast.ParseDirective(cm.Slash, text)
+	if !ok || pd.Tool != tool {
+		return d, false
 	}
-	return d.Name, d.Args, reason, true
+	d.name, d.args = pd.Name, pd.Args
+	return d, true
 }
 
-// Ignored reports whether an ignore comment on the line of pos, or the line
-// above it, silences a report there, and records that it did.
-func (s *Set) Ignored(pos token.Pos) bool {
+// Ignored reports whether an ignore silences rule r at pos, and records that
+// it did.
+func (s *Set) Ignored(pos token.Pos, r rule.Name) bool {
 	p := s.fset.PositionFor(pos, false)
-	lines := s.ignores[p.Filename]
-	for _, l := range []int{p.Line, p.Line - 1} {
-		if ig, ok := lines[l]; ok {
+	silenced := false
+	for _, ig := range s.ignores[p.Filename][p.Line] {
+		if ig.covers(r) {
 			ig.used = true
+			silenced = true
+		}
+	}
+	return silenced
+}
+
+func (ig *ignore) covers(r rule.Name) bool {
+	if len(ig.rules) == 0 {
+		return true
+	}
+	for _, n := range ig.rules {
+		if n == r {
 			return true
 		}
 	}
 	return false
 }
 
-// Unused lists the ignore comments that silenced nothing.
-func (s *Set) Unused() []token.Pos {
+// Unused lists the ignore comments that silenced nothing. An ignore whose
+// every rule is off is left out: switching a flag should not make it a
+// report.
+func (s *Set) Unused(on func(rule.Name) bool) []token.Pos {
 	var out []token.Pos
-	for _, lines := range s.ignores {
-		for _, ig := range lines {
-			if !ig.used {
-				out = append(out, ig.pos)
-			}
+	for _, ig := range s.all {
+		if ig.used || !ig.anyOn(on) {
+			continue
 		}
+		out = append(out, ig.pos)
 	}
 	return out
+}
+
+func (ig *ignore) anyOn(on func(rule.Name) bool) bool {
+	if len(ig.rules) == 0 {
+		return true
+	}
+	for _, n := range ig.rules {
+		if on(n) {
+			return true
+		}
+	}
+	return false
 }
 
 // Problems lists the directives that are malformed or unknown.

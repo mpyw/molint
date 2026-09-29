@@ -27,7 +27,7 @@ Nothing is reported in a generated file. Test files are checked like any other f
 
 ## Nil values
 
-`return-nil`, `wrap-nil` and `unwrap-nil` report a value that is nil for sure at that point. Only these count:
+`return-nil`, `wrap-nil` and `unwrap-nil` report a value that is nil on some path to that point. The branches on the way are taken as independent: only a nil check of the value itself narrows the paths. Only these count:
 
 | Value | Example |
 | --- | --- |
@@ -39,7 +39,7 @@ Nothing is reported in a generated file. Test files are checked like any other f
 
 A φ edge, and every step above, is judged at its own edge: a nil check on the way stops it. So `if p == nil { p = def }; return p` is not a nil value.
 
-A load of a local that is not lifted follows the stores reaching it within the function. The `Alloc` itself counts as a store of the zero value at its position, since SSA emits no store for `var p *T` or a named result. A function literal that captures the variable and only loads it, such as `defer func() { if err != nil { log(err) } }()`, does not stop this. When anything else uses the variable's address, its value is not followed, and it is then not a nil value. That covers a function literal that stores into it, `&x` passed to a call, and `&x` stored anywhere.
+A load of a local that is not lifted follows the stores reaching it within the function. The `Alloc` itself counts as a store of the zero value at its position, since SSA emits no store for `var p *T` or a named result. A function literal that captures the variable and only loads it does not stop this. `defer func() { if err != nil { log(err) } }()` is one. When anything else uses the variable's address, its value is not followed, and it is then not a nil value. That covers a function literal that stores into it, `&x` passed to a call, and `&x` stored anywhere.
 
 Anything else is not a nil value: a parameter, a field, a call's result, a map lookup. nilaway is the tool for those.
 
@@ -55,9 +55,22 @@ A return must not give a nil value in a pointer result.
 
 "Last result is `error`" means a type identical to the predeclared `error`. "Last result is `bool`" means a type identical to the predeclared `bool`.
 
-A return is judged along each path that reaches it through φs. Where the error or bool is a φ, each incoming edge is judged on its own, and every other φ of the same block is read along the same edge. When the values on that edge are φs of the same earlier block, the same is done there, recursively. So `var u *T; var err error; if b { u = x } else { err = e }; return u, err` is not reported, and neither is the same shape nested inside another `if`.
+A return is judged along each path that reaches it through φs. Where the error or bool is a φ, each incoming edge is judged on its own. Every other φ of the same block is read along the same edge. When the values on that edge are φs of the same earlier block, the same is done there, recursively. So this is not reported, and neither is the same shape nested inside another `if`:
 
-Some returns store their results into local variables, then load them: a function with a `defer`, a function whose named results a function literal captures, and a `return` inside the body of a range-over-func loop. A `return` statement with operands is judged on the values it stores, whatever captures the variables. A bare `return` is judged on the stores reaching it, followed as [Nil values](#nil-values) says. A `return` inside a range-over-func body is judged as a return of the enclosing function, not of the synthetic function literal.
+```go
+var u *T
+var err error
+if b {
+	u = x
+} else {
+	err = e
+}
+return u, err
+```
+
+A bare return may load both results from variables SSA does not lift, as in a function with a `defer`. It is judged the same way. Each path back to the stores is judged on its own, with both results read on that path.
+
+Some returns store their results into local variables, then load them. These are a function with a `defer`, a function whose named results a function literal captures, and a `return` inside the body of a range-over-func loop. A `return` statement with operands is judged on the values it stores, whatever captures the variables. So `return nil` is reported even when a deferred function replaces the nil later. The return says nil, and that is what the rule reads. A bare `return` is judged on the stores reaching it, followed as [Nil values](#nil-values) says. A `return` inside a range-over-func body is judged as a return of the enclosing function, not of the synthetic function literal.
 
 Exempt:
 
@@ -146,11 +159,13 @@ A zero `Result[T]` is one of:
 | A load of a local that is not lifted, where a store reaching it is one | As for nil values |
 | A load through `new(mo.Result[T])` before any store | `p := new(mo.Result[T]); return *p` |
 
-A use is reported: a return, an argument, a conversion to an interface (reported at the conversion), a store, a method call on it, a send, a map update. These are not uses:
+A use is reported: a return, an argument, a conversion to an interface, a store, a method call on it, a send, a map update. A conversion is reported where it is. An implicit conversion has no position of its own, so it is reported where the converted value is used. These are not uses:
 
 - a comparison;
 - the store that initializes a local variable, as in `r := mo.Result[int]{}` for a variable whose address is taken. The loads of that variable are judged instead;
 - the store a `return` makes into its result variable. The return is judged instead, once.
+
+A comparison with the zero constant on the way stops a zero, as a nil check does. So `if r == (mo.Result[int]{}) { r = mo.Err[int](e) }; return r` is not reported.
 
 A zero `Result` written into a field or an element, as in `Holder{R: mo.Result[int]{}}`, is a store and is reported. A field left out of a composite literal, as in `Holder{}`, is not followed.
 
@@ -167,7 +182,10 @@ These calls must not be made on an `Option[T]` or a `Result[T]` whose `T` is a p
 
 `o.MustGet()` is not reported: it panics rather than give nil. A `T` that is not a pointer is not reported: `OrEmpty` then chooses the zero value in plain sight.
 
-Message: `OrEmpty on mo.Option[*T] gives nil when it is empty; use Get and check ok, or OrElse with a non-nil value [unwrap-nil]`. For `OrElse`: `OrElse(nil) on mo.Option[*T] gives nil when it is empty; pass a non-nil value [unwrap-nil]`. For a `Result`: `OrEmpty on mo.Result[*T] gives nil when it is an error; use Get and check the error, or OrElse with a non-nil value [unwrap-nil]`, and `OrElse(nil) on mo.Result[*T] gives nil when it is an error; pass a non-nil value [unwrap-nil]`.
+Message: `OrEmpty on mo.Option[*T] gives nil when it is empty; use Get and check ok, or OrElse with a non-nil value [unwrap-nil]`. For `OrElse`: `OrElse(nil) on mo.Option[*T] gives nil when it is empty; pass a non-nil value [unwrap-nil]`. For a `Result`, the messages are these:
+
+- `OrEmpty on mo.Result[*T] gives nil when it is an error; use Get and check the error, or OrElse with a non-nil value [unwrap-nil]`
+- `OrElse(nil) on mo.Result[*T] gives nil when it is an error; pass a non-nil value [unwrap-nil]`
 
 ## `unwrap-discard`
 
@@ -186,13 +204,26 @@ Message: `Get on mo.Option[T] discards ok; check it, or use OrElse [unwrap-disca
 
 A method implements an interface when all of these hold:
 
-- the interface is a named or aliased, non-generic interface type, declared in the package (at package level or inside a function) or in a package the package imports directly;
+- the interface is a named or aliased interface type that is not generic;
+- it is declared in the package, at package level or inside a function, or in a package the package imports directly;
 - the method's name is one of the interface's methods;
+- for a method outside the test files, the interface is declared, or its package imported, outside the test files too;
 - the receiver's type, or a pointer to it, implements the interface.
+
+A package with tests is checked twice: alone, and with its test files. The rule for test files makes both checks agree on a method. Otherwise an interface that only a test imports would exempt the method in one check and not the other, and no ignore could satisfy both.
+
+## Positions
+
+| Report | Position |
+| --- | --- |
+| `return-nil`, `result-zero` at a return | The `return` keyword, also for a return inside a range-over-func body |
+| A rule about a call | The opening parenthesis of the call. A trailing ignore goes on that line, which is the first line of a call that spans several |
+| `return-bool`, `return-error` | The name of the declaration |
+| `result-zero` at a store, a send, or a map update | The statement |
 
 ## Directives
 
-`//molint:ignore <rules> // <reason>` silences the named rules. A directive on a line of its own silences the line below. A directive that trails code silences its own line only. The rules are comma-separated. With no rules, it silences every rule. Reports about directives themselves cannot be silenced. An ignore aimed at one silences nothing, so it is reported as unused.
+`//molint:ignore <rules> // <reason>` silences the named rules. It is a line comment: `/*molint:ignore*/` is not a directive. A directive on a line of its own silences the line below. A directive that trails code silences its own line only. The rules are comma-separated. With no rules, it silences every rule. Reports about directives themselves cannot be silenced. An ignore aimed at one silences nothing, so it is reported as unused.
 
 | Directive | Result |
 | --- | --- |
@@ -205,7 +236,7 @@ A method implements an interface when all of these hold:
 | An ignore that silences nothing | Reported: `unused molint:ignore directive`. An ignore whose every rule is turned off by a flag is not reported |
 | Any other `//molint:` directive | Reported: `unknown directive molint:x` |
 
-A directive in a generated file is not read.
+A directive in a generated file is not read. An ignore without a reason is reported and silences nothing. When two ignores silence one report, both count as used. An ignore that names several rules is used when any of them silences something.
 
 ## Flags
 
@@ -222,7 +253,12 @@ molint -return-bool=false ./...  # every rule except return-bool and return-erro
 | Gap | Why |
 | --- | --- |
 | A nil that comes from outside the function, or from a field or a call | molint follows values only inside one function |
+| Branches whose conditions depend on each other, as in `if c { p = x }; if c { return p }` | Branches are taken as independent, so this is reported although no run returns nil. The same holds for a nil check that can never succeed |
+| A nil check on a variable that SSA does not lift, before a bare return. `if p == nil { p = def }` in a function with a `defer` is one | The stores reaching the load are followed, and the check on the loaded value is not. A nil constant stored on an earlier path is then reported |
 | `mo.TupleToOption`, `mo.TupleToResult`, `mo.EmptyableToOption` | They check their arguments at run time |
 | A zero `Result` inside a struct | Fields are not followed |
-| A constructor or method of mo passed through a parameter or a field, or a method expression such as `mo.Option[*T].OrElse(o, nil)` | They are called through a function value or a thunk, which is not followed |
+| A constructor or method of mo reached indirectly. That is through a parameter, a field, a method value (`f := o.OrEmpty; f()`), or a method expression (`mo.Option[*T].OrElse(o, nil)`) | They are called through a function value, a bound wrapper, or a thunk, which is not followed |
+| An error checked after the pointer and the error are set on separate branches. `switch { case a: u = x; default: err = e }` then `if err != nil { return nil, err }; return u, nil` is one | The check is on another value, so it does not narrow the pointer. This is reported. Return from each branch instead |
+| A retry loop that returns its last error. `for range 3 { if u, err = f(); err == nil { return u, nil } }` then `return nil, err` is one | The loop is taken as able to run no rounds, which leaves the error nil. Start the error at a sentinel instead |
+| An ignore above a `//line` comment | The ignore targets the `//line` comment's own line, so it is reported as unused |
 | A method that implements an interface of a package its package does not import directly | The interface is not seen, so the method is not exempt. `MarshalJSON` in a package that does not import `encoding/json` is reported by `return-error`. Write an ignore |

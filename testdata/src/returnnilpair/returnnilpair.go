@@ -410,3 +410,79 @@ type MyBool bool
 func NilMyBool() (*T, MyBool) {
 	return nil, false // want `^NilMyBool returns a nil \*T; return mo\.Option\[\*T\] instead \[return-nil\]$`
 }
+
+// ===== Loops =====
+
+// Not reported: a round sets a value, sets an error, or leaves the pair as
+// it was, and the pair goes round the loop together.
+func PairAroundLoop(n int) (*T, error) {
+	u, err := get(), error(nil)
+	for i := range n {
+		switch i % 3 {
+		case 0:
+			u, err = get(), nil
+		case 1:
+			u, err = nil, errX
+		}
+	}
+	return u, err
+}
+
+// Not reported: with a defer, a bare return pairs the stores round a loop,
+// including a round that stores nothing.
+func PairDeferLoop(n int) (u *T, err error) {
+	defer cleanup()
+	u = get()
+	for i := range n {
+		switch i % 3 {
+		case 0:
+			u, err = get(), nil
+		case 1:
+			u, err = nil, errX
+		}
+	}
+	return
+}
+
+// The same loop, starting from a pair that is nil with a nil error.
+func PairDeferLoopNil(n int) (u *T, err error) {
+	defer cleanup()
+	for i := range n {
+		switch i % 3 {
+		case 0:
+			u, err = get(), nil
+		case 1:
+			u, err = nil, errX
+		}
+	}
+	return // want `^PairDeferLoopNil returns a nil \*T with a nil error; return an error, or mo\.Option\[\*T\] \[return-nil\]$`
+}
+
+type C struct{ m map[string]*T }
+
+func (*C) lock() {}
+
+// Not reported: the lifted error and the result variable, which the defer
+// keeps in memory, pair up along each edge into the join.
+func (c *C) Get(k string) (v *T, err error) {
+	defer c.lock()
+	var e error
+	if x, ok := c.m[k]; ok {
+		v = x
+	} else {
+		e = errX
+	}
+	return v, e
+}
+
+// The same join, with an edge that sets neither.
+func (c *C) GetMissing(k string) (v *T, err error) {
+	defer c.lock()
+	var e error
+	if x, ok := c.m[k]; ok {
+		v = x
+	} else if k == "" {
+		e = errX
+	}
+	return v, e // want `^\(\*C\)\.GetMissing returns a nil \*T with a nil error; return an error, or mo\.Option\[\*T\] \[return-nil\]$`
+}

@@ -194,3 +194,12 @@ func InLiteral(o mo.Option[*T]) func() *T {
 		return o.OrEmpty() // want `^OrEmpty on mo\.Option\[\*T\] gives nil when it is empty; use Get and check ok, or OrElse with a non-nil value \[unwrap-nil\]$`
 	}
 }
+
+type S struct{}
+
+func (S) OrEmpty() *T { return &T{} }
+
+// Not reported: a method of another type with the same name.
+func OtherOrEmpty(s S) {
+	use(s.OrEmpty())
+}

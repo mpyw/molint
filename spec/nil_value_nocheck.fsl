@@ -1,70 +1,22 @@
-// What a "nil value" report means, for a value built from φ-nodes and nil
-// checks. return-nil, wrap-nil and unwrap-nil all rest on it. See "Nil values"
-// in design/rules.md.
+// FAILS ON PURPOSE. This is the nil-value rule that ignores nil checks on the
+// way, and the counterexample is the reason each edge is judged at its own
+// check.
 //
-// The program has a loop and a join. The loop carries two φ-nodes, a and b.
-// The join carries the returned φ-node, r, with three edges:
+// A φ-node edge under a check that the value is not nil still counts as
+// bringing nil when its operand is a nil value:
 //
-//   a, b := A0, B0                 entry operands: nil, &T{}, or f()
-//   for cond() {
-//     a, b = A1, B1                back-edge operands: nil, &T{}, f(), a or b
-//   }
-//   switch {                       three edges into the join; each edge may sit
-//   case c0: r = R0                under a check of its own operand, as in
-//   case c1: r = R1                  if R0 == nil { r = R0 }   (IsNil)
-//   default: r = R2                  if R0 != nil { r = R0 }   (NotNil)
-//   }
-//   return r
+//   var p *T
+//   if c { p = x }              p is φ(nil, x)
+//   if p == nil { p = def }
+//   return p                    reported: "F returns a nil *T"
 //
-// f() stands for any value from outside: a parameter, a field, a call's
-// result. Each evaluation may give nil or not. `if p == nil { p = def }; return
-// p` is this shape with R0 = p under NotNil and R1 = def.
+// The edge that keeps p runs only when p is not nil. The witness run takes
+// that edge, which its check blocks. The counterexample fslc finds is the
+// smallest one: an edge `if p != nil { return p }` whose p is the constant.
 //
-// The rule, nilOp below, reads only the program: its operands and its checks.
-// The constant nil is a nil value. A φ-node is one when an edge brings one.
-// An edge under NotNil brings none. An edge under IsNil brings one, whatever
-// its operand. A value from outside is not one.
-//
-// The claim. The rule reports r exactly when some run of this program returns
-// a nil that is a constant's, or that passed a nil check. In detail:
-//
-//   ReportMeansANilIsReturned  when r is reported, the witness run below
-//                              is never blocked and returns such a nil.
-//                              So some run returns it.
-//   ConstantNilIsReported      whenever a run returns a nil constant, r is
-//                              reported. A nil check on the way is judged
-//                              at its own edge, so it cannot hide one.
-//
-// A nil from outside that no check tests is not reported. That is the scope
-// the rules give to nilaway. ExtNilIsNotReported witnesses it.
-//
-// The program is chosen by init from free choice bits, so every program is a
-// start, and it never changes. The run then chooses the branches, the number
-// of rounds, and what each f() gives.
-//
-// The witness run is built from the rule's verdict alone. It takes the first
-// edge of the join that brings a nil. It makes every f() nil when that edge
-// is under IsNil, and non-nil otherwise. It goes round the loop just as often
-// as the nil needs to reach the φ-node: a nil can take two rounds, as in
-// `a, b = b, nil`.
-//
-// ASSUME-1: branches are taken as independent, and only a nil check of the
-//   value itself narrows the paths. That is the rule's own definition: "nil
-//   on some path". Correlated conditions are an accepted gap of the rule,
-//   documented by nil_value_correlated.fsl.
-// ASSUME-2: a nil check under IsNil tests a value that some run makes nil.
-//   A check that can never succeed, as in `p := &T{}; if p == nil { return p
-//   }`, is an accepted gap of the rule: it reports that dead code.
-//   nil_value_dead_check.fsl documents it. This spec leaves such programs out
-//   because the claim is about runs, and dead code has none.
-// ASSUME-3 (representation only): two loop φ-nodes, three join edges, one
-//   check per edge. Two φ-nodes are enough for a nil to need two rounds.
-// ASSUME-4 (representation only): a value is tracked only as nil from a
-//   constant, nil from outside, or non-nil. Which non-nil value does not
-//   matter to the rule.
-// ASSUME-5: ChangeType is not modeled. The rule and the run both see through
-//   it, so it adds nothing to check.
-spec NilValue {
+// The program, the run and the claim are those of nil_value.fsl, except for
+// brings().
+spec NilValueNoCheck {
   enum Op { Nil, Alloc, Ext, PhiA, PhiB }
   enum Guard { NoCheck, IsNil, NotNil }
   enum Val { NilConst, NilExt, NonNil }
@@ -112,7 +64,8 @@ spec NilValue {
   def nilA() = src(a0) or src(a1) or (a1 == PhiB and (src(b0) or src(b1)))
   def nilB() = src(b0) or src(b1) or (b1 == PhiA and (src(a0) or src(a1)))
   def nilOp(o: Op) = src(o) or (o == PhiA and nilA()) or (o == PhiB and nilB())
-  def brings(k: Edge) = g[k] == IsNil or (g[k] == NoCheck and nilOp(r[k]))
+  // THE NAIVE RULE: a check on the way does not stop a nil.
+  def brings(k: Edge) = g[k] == IsNil or nilOp(r[k])
   def reported() = exists k: Edge { brings(k) }
 
   // --- what may be nil at run time, counting values from outside ----------------
@@ -212,40 +165,8 @@ spec NilValue {
 
   invariant ConstantNilIsReported { (pc == Returned and rv == NilConst) => reported() }
 
-  // --- auxiliary: what makes the two inductive ------------------------------------
-
-  invariant ProgramShape { entryShape() and (pc != Ready => configOk()) }
-  invariant VerdictFixed {
-    pc != Ready =>
-      (rep == reported() and w == wk() and wnil == wx() and wrounds == rounds())
-  }
-  invariant FreshBeforeRun {
-    (pc == Ready or pc == Judged) =>
-      (a == NonNil and b == NonNil and iters == 0 and not follow)
-  }
-  invariant FollowOnlyWhenReported { follow => rep }
-  invariant NilConstTraced { (a == NilConst => nilA()) and (b == NilConst => nilB()) }
-  invariant ReturnedTaken { pc == Returned => rv == ev(r[taken], rv == NilExt) }
-  invariant FollowWithinRounds {
-    (follow and pc == Loop => iters <= wrounds) and (follow and pc == Join => iters == wrounds)
-  }
-  // Under the witness's choices, where the loop φ-nodes hold a nil.
-  invariant WitnessEntry {
-    (follow and (pc == Loop or pc == Join) and iters == 0) =>
-      ((ws(a0) => witnessNil(a)) and (ws(b0) => witnessNil(b)))
-  }
-  invariant WitnessBackEdge {
-    (follow and (pc == Loop or pc == Join) and iters >= 1) =>
-      ((ws(a1) => witnessNil(a)) and (ws(b1) => witnessNil(b)))
-  }
-  invariant WitnessRoundOne {
-    (follow and (pc == Loop or pc == Join) and iters == 1) =>
-      ((a1 == PhiB and ws(b0) => witnessNil(a)) and (b1 == PhiA and ws(a0) => witnessNil(b)))
-  }
-  invariant WitnessRoundTwo {
-    (follow and (pc == Loop or pc == Join) and iters == 2) =>
-      ((a1 == PhiB and ws(b1) => witnessNil(a)) and (b1 == PhiA and ws(a1) => witnessNil(b)))
-  }
+  // The auxiliary invariants of the proved spec are left out: a failing
+  // spec needs no induction, and each must break on its claim.
 
   // --- witnesses ------------------------------------------------------------------
 
@@ -267,9 +188,6 @@ spec NilValue {
     and not nilB() and rv == NilExt
   }
   reachable ExtNilIsNotReported { pc == Returned and rv == NilExt and not reported() }
-  // The witness runs to the return, round the loop twice, and through a check.
-  reachable WitnessTakesTwoRounds { follow and pc == Returned and wrounds == 2 }
-  reachable WitnessThroughACheck { follow and pc == Returned and wnil and r[w] == PhiA }
   // A report says some run returns nil, not this one.
   reachable ReportedRunReturnsNonNil { pc == Returned and reported() and rv == NonNil }
 }

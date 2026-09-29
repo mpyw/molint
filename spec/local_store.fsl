@@ -1,0 +1,236 @@
+// A load of a local variable that is not lifted. See "Nil values" and
+// "return-nil" in design/rules.md.
+//
+// go/ssa keeps a variable in memory when its address is used: a result of a
+// function with a defer, a variable a function literal captures, a variable
+// whose address is taken. Its reads are loads and its writes are stores. The
+// rule follows the stores that reach a load within the function. The Alloc
+// itself counts as a store of the zero value, since SSA emits no store for
+// `var p *T` or a named result.
+//
+// The program:
+//
+//   var x *T                  the Alloc: a store of nil
+//   x = S0                    or no store: nil, &T{}, f()
+//   for ... {                 the loop is there or not (looped)
+//     switch {                three arms; each stores A0..A2, or keeps x
+//     case c0: x = A0
+//     case c1: x = A1
+//     default: x = A2
+//     }
+//   }
+//   [escape]                  see below
+//   x = S3                    or no store: a later assignment
+//   [escape, deferred]        a deferred call runs at the return
+//   ... = x                   the load: a bare return, or any read of x
+//
+// A return with operands is not a load here. design/rules.md judges it on
+// the values it stores, as the φ-nodes of pairing.fsl and nil_value.fsl.
+//
+// The escape is one of:
+//
+//   NoEscape     nothing but loads and stores use x
+//   LoadsOnly    a function literal captures x and only reads it, as in
+//                defer func() { if err != nil { log(err) } }()
+//   StoresInto   a function literal captures x and assigns to it
+//   AddrPassed   &x is passed to a call, or stored somewhere
+//
+// With StoresInto or AddrPassed, the code that holds the address runs at the
+// escape point, before S3 or after it as a deferred call. It keeps x, sets
+// it to a non-nil value, or sets it to a value from outside. The rule does not
+// know which, so it does not follow such a variable.
+//
+// The rule, loadNil below: x is not followed after StoresInto or AddrPassed.
+// Otherwise the load is a nil value when a store reaching it stores nil. S3
+// kills every store before it. Without the loop, an arm's store kills the
+// entry's store on that arm. With the loop, the loop may run zero times.
+//
+// The claim:
+//
+//   ReportMeansANilIsLoaded   when reported, the witness run loads the nil
+//                             constant
+//   ConstantNilIsReported     whenever a run loads the nil constant, and x
+//                             is followed, it is reported
+//
+// The witness takes the first arm that stores nil, once. With none, it keeps
+// the entry's store: zero rounds of the loop, or an arm that keeps x.
+//
+// ASSUME-1: branches and the loop are taken as independent, as the rule
+//   defines. The gap when they correlate: nil_value_correlated.fsl.
+// ASSUME-2 (representation only): one variable, three arms, one escape
+//   point. A second variable adds nothing a store does not already model.
+// ASSUME-3: a nil check on a load is not modeled. It is an accepted gap of
+//   the rule: stores are followed, checks on loaded values are not. So
+//   `if p == nil { p = def }; return` in a function with a defer is reported
+//   through the Alloc's zero, although the check replaced it.
+spec LocalStore {
+  enum Store { Keep, Nil, Alloc, Ext }
+  enum Escape { NoEscape, LoadsOnly, StoresInto, AddrPassed }
+  enum Effect { Keeps, SetsNonNil, SetsOutside }
+  enum Val { NilConst, NilExt, NonNil }
+  enum Pc { Ready, Judged, Loop, Left, Loaded }
+  type Arm = 0..2
+  type Rounds = 0..2
+  type Bit = 0..15
+
+  state {
+    pc: Pc,
+    ch: Map<Bit, Bool>,
+    // the program
+    s0: Store, arm: Map<Arm, Store>, looped: Bool,
+    esc: Escape, eff: Effect, deferred: Bool, s3: Store,
+    // the verdict and its witness
+    rep: Bool, wArm: Arm, wRounds: Rounds,
+    // the run
+    x: Val, rounds: Rounds, rv: Val, follow: Bool
+  }
+
+  def pickStore(i: Bit) =
+    if ch[i] then (if ch[i + 1] then Keep else Nil) else (if ch[i + 1] then Alloc else Ext)
+  def pickEscape(i: Bit) =
+    if ch[i] then (if ch[i + 1] then NoEscape else LoadsOnly)
+    else (if ch[i + 1] then StoresInto else AddrPassed)
+  def pickEffect(i: Bit) = if ch[i] then Keeps else if ch[i + 1] then SetsNonNil else SetsOutside
+
+  init {
+    pc = Ready
+    s0 = pickStore(0)
+    forall k: Arm { arm[k] = pickStore(2 + 2 * k) }
+    looped = ch[8]
+    esc = pickEscape(9)  eff = pickEffect(11)  deferred = ch[13]  s3 = pickStore(14)
+    rep = false  wArm = 0  wRounds = 0
+    x = NonNil  rounds = 0  rv = NonNil  follow = false
+  }
+
+  // --- the rule -------------------------------------------------------------------
+
+  def followed() = esc == NoEscape or esc == LoadsOnly
+  def entryNil() = s0 == Keep or s0 == Nil
+  def someArmNil() = exists k: Arm { arm[k] == Nil }
+  def someArmKeeps() = exists k: Arm { arm[k] == Keep }
+  def joinNil() = someArmNil() or (entryNil() and (looped or someArmKeeps()))
+  def loadNil() = if s3 != Keep then s3 == Nil else joinNil()
+  def reported() = followed() and loadNil()
+
+  // The witness.
+  def firstNilArm() = if arm[0] == Nil then 0 else if arm[1] == Nil then 1 else 2
+  def firstKeepArm() = if arm[0] == Keep then 0 else if arm[1] == Keep then 1 else 2
+  def witnessArm() = if someArmNil() then firstNilArm() else firstKeepArm()
+  def witnessRounds() = if s3 == Keep and not someArmNil() and looped then 0 else 1
+
+  action judge() {
+    requires pc == Ready
+    pc = Judged
+    rep = reported()  wArm = witnessArm()  wRounds = witnessRounds()
+  }
+
+  // --- the run --------------------------------------------------------------------
+
+  def store(st: Store, old: Val, nilOut: Bool) =
+    if st == Keep then old else if st == Nil then NilConst else if st == Alloc then NonNil
+    else if nilOut then NilExt else NonNil
+  def escapes() = esc == StoresInto or esc == AddrPassed
+  def effect(old: Val, nilOut: Bool) =
+    if not escapes() or eff == Keeps then old else if eff == SetsNonNil then NonNil
+    else if nilOut then NilExt else NonNil
+
+  action enter(n: Bool) {
+    requires pc == Judged
+    pc = Loop
+    x = store(s0, NilConst, n)
+    follow = rep and not n
+  }
+
+  action round(k: Arm, n: Bool) {
+    requires pc == Loop  requires looped or rounds == 0
+    x = store(arm[k], x, n)
+    rounds = min(rounds + 1, 2)
+    follow = follow and rounds < wRounds and k == wArm and not n
+  }
+
+  action leave() {
+    requires pc == Loop  requires looped or rounds == 1
+    pc = Left
+    follow = follow and rounds == wRounds
+  }
+
+  // The escape point, the store S3, the deferred escape, then the load.
+  action load(ne: Bool, n3: Bool) {
+    requires pc == Left
+    pc = Loaded
+    rv = if deferred then effect(store(s3, x, n3), ne) else store(s3, effect(x, ne), n3)
+    follow = follow and not ne and not n3
+  }
+
+  terminal { pc == Loaded }
+
+  // --- what is proved -------------------------------------------------------------
+
+  invariant ReportMeansANilIsLoaded { (follow and pc == Loaded) => rv == NilConst }
+  invariant ConstantNilIsReported {
+    (pc == Loaded and rv == NilConst and followed()) => reported()
+  }
+
+  // --- auxiliary ------------------------------------------------------------------
+
+  invariant VerdictFixed {
+    pc != Ready => (rep == reported() and wArm == witnessArm() and wRounds == witnessRounds())
+  }
+  invariant FreshBeforeRun {
+    (pc == Ready or pc == Judged) => (x == NonNil and rounds == 0 and rv == NonNil and not follow)
+  }
+  invariant FollowOnlyWhenReported { follow => rep }
+  invariant OneRoundUnlessLooped { (not looped and pc == Left) => rounds == 1 }
+  invariant NilTraced {
+    (pc == Loop or pc == Left) => (x == NilConst => (
+      (rounds == 0 and entryNil()) or (rounds >= 1 and joinNil())
+    ))
+  }
+  invariant WitnessRuns {
+    (follow and (pc == Loop or pc == Left)) => (
+      rounds <= wRounds
+      and (rounds == 0 => x == store(s0, NilConst, false))
+      and ((rounds == wRounds and s3 == Keep) => x == NilConst)
+      and (pc == Left => rounds == wRounds)
+    )
+  }
+  invariant LoadedTraced {
+    (pc == Loaded and rv == NilConst and followed()) => (s3 == Nil or (s3 == Keep and joinNil()))
+  }
+
+  // --- witnesses ------------------------------------------------------------------
+
+  // var p *T; defer func() { log(p) }(); if c { p = x }; return
+  reachable LoadOnlyCaptureIsFollowed {
+    pc == Loaded and reported() and esc == LoadsOnly and s3 == Keep and rv == NilConst
+  }
+  // p = nil; defer func() { p = def }(); return: the load gives the deferred store.
+  reachable DeferredStoreIsNotFollowed {
+    pc == Loaded and not reported() and esc == StoresInto and deferred and s3 == Nil
+    and eff == SetsNonNil and rv == NonNil
+  }
+  // The witness runs to the load, through an arm and through the loop.
+  reachable WitnessThroughAnArm { follow and pc == Loaded and rounds == 1 and arm[wArm] == Nil }
+  reachable WitnessSkipsTheLoop { follow and pc == Loaded and rounds == 0 and looped }
+  // Not followed, so a nil that is loaded goes unreported: the gap.
+  reachable EscapedNilIsMissed { pc == Loaded and not reported() and escapes() and rv == NilConst }
+  // Every arm stores &T{}: the entry's nil does not reach, without a loop.
+  reachable ArmsKillTheEntry {
+    pc == Loaded and not reported() and not looped and entryNil() and s3 == Keep
+    and (forall k: Arm { arm[k] == Alloc }) and followed()
+  }
+  // The same arms in a loop that may run zero times: the entry's nil reaches.
+  reachable LoopLetsTheEntryReach {
+    pc == Loaded and reported() and looped and entryNil() and s3 == Keep
+    and (forall k: Arm { arm[k] == Alloc }) and rounds == 0 and rv == NilConst
+  }
+  // An arm that stores nil, after an entry that is not nil, with another arm
+  // after it in program order.
+  reachable NilFromAnEarlierArm {
+    pc == Loaded and reported() and s0 == Alloc and arm[0] == Nil and arm[2] == Alloc
+    and s3 == Keep and rv == NilConst
+  }
+  reachable OverwriteBeforeLoad {
+    pc == Loaded and not reported() and joinNil() and s3 == Alloc and followed()
+  }
+}

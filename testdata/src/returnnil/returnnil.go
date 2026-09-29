@@ -814,3 +814,148 @@ func RangeFuncNonNil(seq iter.Seq[*T]) *T {
 	}
 	return &T{}
 }
+
+// A return inside a range-over-func loop nested in another is judged as a
+// return of the outermost function.
+func RangeFuncNested(outer iter.Seq[iter.Seq[*T]]) *T {
+	for inner := range outer {
+		for x := range inner {
+			if cond() {
+				return nil // want `^RangeFuncNested returns a nil \*T; return mo\.Option\[\*T\] instead \[return-nil\]$`
+			}
+			return x
+		}
+	}
+	return &T{}
+}
+
+// Not reported: two values swap round a loop, so each φ reaches the other.
+func PhiCycle(n int) *T {
+	p, q := get(), get()
+	for range n {
+		p, q = q, p
+	}
+	return p
+}
+
+type Pair[K comparable, V any] struct{}
+
+// Several type arguments are joined by a comma.
+func NilPair() *Pair[int, string] {
+	return nil // want `^NilPair returns a nil \*Pair\[int, string\]; return mo\.Option\[\*Pair\[int, string\]\] instead \[return-nil\]$`
+}
+
+// ===== range-over-func bodies that end without a return =====
+
+// Not reported: the body only assigns a local, and the function checks it
+// before it returns. Only a return statement in the body is a return.
+func RangeLastOf(seq iter.Seq[*T]) (*T, error) {
+	var last *T
+	for v := range seq {
+		last = v
+	}
+	if last == nil {
+		return nil, errEmpty
+	}
+	return last, nil
+}
+
+var errEmpty = errorString("empty")
+
+type errorString string
+
+func (e errorString) Error() string { return string(e) }
+
+// Not reported: a break sets a named result, which the function defaults.
+func RangeBreakNamed(seq iter.Seq[*T]) (found *T) {
+	for x := range seq {
+		found = x
+		if x.N > 0 {
+			break
+		}
+		found = nil
+	}
+	if found == nil {
+		found = &T{}
+	}
+	return
+}
+
+// Not reported: an assignment just before a bare return is not the
+// return's own store, and the deferred literal that stores into the result
+// stops the following.
+func BareAfterAssignment() (p *T) {
+	defer func() {
+		if p == nil {
+			p = &T{}
+		}
+	}()
+	p = nil
+	return
+}
+
+// A variable of the function, returned from inside a range-over-func body,
+// holds what reached the loop.
+func RangeReturnsLocal(seq iter.Seq[int]) *T {
+	var p *T
+	for x := range seq {
+		if x == 0 {
+			return p // want `^RangeReturnsLocal returns a nil \*T; return mo\.Option\[\*T\] instead \[return-nil\]$`
+		}
+	}
+	return &T{}
+}
+
+// Not reported: the variable is set before the loop.
+func RangeReturnsLocalSet(seq iter.Seq[int]) *T {
+	p := get()
+	for x := range seq {
+		if x == 0 {
+			return p
+		}
+	}
+	return &T{}
+}
+
+// Not reported: the body stores into the variable, so it is not followed.
+func RangeReturnsLocalStored(seq iter.Seq[int]) *T {
+	var p *T
+	for x := range seq {
+		if x == 0 {
+			return p
+		}
+		p = get()
+	}
+	return &T{}
+}
+
+// The same through a loop nested in another.
+func RangeReturnsLocalNested(outer iter.Seq[iter.Seq[int]]) *T {
+	var p *T
+	for inner := range outer {
+		for x := range inner {
+			if x == 0 {
+				return p // want `^RangeReturnsLocalNested returns a nil \*T; return mo\.Option\[\*T\] instead \[return-nil\]$`
+			}
+		}
+	}
+	return &T{}
+}
+
+// The same φ is returned twice, and judged once.
+func PhiReturnedTwice(c, d bool) *T {
+	var p *T
+	if c {
+		p = get()
+	}
+	if d {
+		return p // want `^PhiReturnedTwice returns a nil \*T; return mo\.Option\[\*T\] instead \[return-nil\]$`
+	}
+	log()
+	return p // want `^PhiReturnedTwice returns a nil \*T; return mo\.Option\[\*T\] instead \[return-nil\]$`
+}
+
+// Not reported: a receive is not followed.
+func Receive(ch chan *T) *T {
+	return <-ch
+}

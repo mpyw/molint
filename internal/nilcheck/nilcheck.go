@@ -2,6 +2,8 @@
 // being nil.
 //
 // A value compared with nil by an if is known on each edge the if leaves by.
+// A struct compared with its zero value counts the same way, so that "nil"
+// here means the zero constant of the value's type.
 // It stays known in every block that edge dominates, since an SSA value never
 // changes: a use of the value is dominated by its definition, so no path
 // defines it again between the check and the use.
@@ -71,8 +73,9 @@ func branch(v ssa.Value, from, to *ssa.BasicBlock) State {
 	return NonNil
 }
 
-// isNil reports whether v is the constant nil.
+// isNil reports whether v is the zero constant: nil, or the zero value of a
+// struct.
 func isNil(v ssa.Value) bool {
 	c, ok := v.(*ssa.Const)
-	return ok && c.IsNil()
+	return ok && c.Value == nil
 }

@@ -18,6 +18,7 @@ func TestAnalyzer(t *testing.T) {
 		"returnbool",
 		"returnerroroff",
 		"implementing",
+		"implementingtest",
 		"wrapnil",
 		"resultzero",
 		"unwrapnil",

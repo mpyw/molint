@@ -111,3 +111,11 @@ func (o Option[T]) ToPointer() *T {
 
 	return &o.value
 }
+
+// IO is copied from io.go of v1.17.0, without its methods. It is here so
+// that a type of mo other than Option and Result can be named.
+type IO[R any] struct {
+	unsafePerform f0[R]
+}
+
+type f0[R any] func() R

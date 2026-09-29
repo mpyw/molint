@@ -247,10 +247,11 @@ func ArgumentDeferred() {
 	defer consume(mo.Result[int]{}) // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
 }
 
-// The report is at the conversion to the interface.
+// An implicit conversion has no position of its own, so the report is where
+// the converted value is used.
 func ConvertedToInterface() {
-	var x any = mo.Result[int]{} // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
-	use(x)
+	var x any = mo.Result[int]{}
+	use(x) // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
 }
 
 // Not reported: the argument is built.
@@ -305,6 +306,27 @@ func Send(ch chan<- mo.Result[int]) {
 
 func MapUpdate(m map[string]mo.Result[int]) {
 	m["k"] = mo.Result[int]{} // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
+}
+
+// Not reported: a comparison with the zero constant on the way stops a zero,
+// as a nil check does.
+func ComparedAndReplaced(c bool) mo.Result[int] {
+	var r mo.Result[int]
+	if c {
+		r = mo.Ok(1)
+	}
+	if r == (mo.Result[int]{}) {
+		r = mo.Err[int](errX)
+	}
+	return r
+}
+
+// The branch where the comparison says zero gives a zero.
+func ComparedZero(r mo.Result[int]) mo.Result[int] {
+	if r == (mo.Result[int]{}) {
+		return r // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
+	}
+	return r
 }
 
 // ===== Not uses =====
@@ -381,4 +403,76 @@ func InLiteral() func() mo.Result[int] {
 	return func() mo.Result[int] {
 		return mo.Result[int]{} // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
 	}
+}
+
+// ===== range-over-func =====
+
+func RangeFunc(seq func(func(int) bool)) mo.Result[int] {
+	for x := range seq {
+		if x > 0 {
+			return mo.Result[int]{} // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
+		}
+	}
+	return mo.Ok(0)
+}
+
+// ===== Other types of mo =====
+
+// Not reported: only mo.Result has a zero value that means Ok.
+func ZeroIO() mo.IO[int] {
+	return mo.IO[int]{}
+}
+
+// Not reported: the body sets one result only on some iterations, and the
+// function returns after the loop.
+func RangeSomeResults(seq func(func(int) bool)) (p *T, r mo.Result[int]) {
+	r = mo.Ok(0)
+	for x := range seq {
+		if x > 0 {
+			r = mo.Ok(x)
+		}
+		p = &T{}
+	}
+	return
+}
+
+// ===== Stores from function literals =====
+
+// A function literal that stores a zero into a captured variable makes a
+// use: the loads of the variable are no longer followed.
+func StoredByLiteral() mo.Result[int] {
+	r := mo.Ok(1)
+	func() {
+		r = mo.Result[int]{} // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
+	}()
+	return r
+}
+
+// The same from the body of a range-over-func loop.
+func StoredByRangeBody(seq func(func(int) bool)) mo.Result[int] {
+	r := mo.Ok(1)
+	for x := range seq {
+		if x > 0 {
+			r = mo.Result[int]{} // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
+		}
+	}
+	return r
+}
+
+// An implicit conversion that flows through a φ is reported where the
+// converted value is used.
+func ConvertedThroughPhi(c bool) {
+	var x any
+	if c {
+		x = mo.Result[int]{}
+	} else {
+		x = 1
+	}
+	use(x) // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
+}
+
+// An explicit conversion is reported where it is written.
+func ConvertedExplicitly() {
+	x := any(mo.Result[int]{}) // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
+	use(x)
 }

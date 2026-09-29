@@ -70,6 +70,26 @@ jobs:
           use_oidc: true
         continue-on-error: true
 
+  spec:
+    name: Spec
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # The formal specs are documentation that cannot drift only if something
+      # re-runs them. fslc is the FSL verifier: https://github.com/ymm-oss/fsl
+      - name: Install fslc
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/ymm-oss/fsl/main/install.sh | bash -s -- --no-skill
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # verify.sh holds the specs that must be proved and the ones that must
+      # stay violated, and fails when a spec is in neither.
+      - name: Verify the specs
+        run: ./spec/verify.sh
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
