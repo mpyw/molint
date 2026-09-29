@@ -183,7 +183,16 @@ return p // not reported
 
 A function literal is exempt. So is a method that implements an interface, since the interface fixes its signature.
 
-Fix: return `mo.Option[*T]`.
+Fix:
+
+```go
+func F() mo.Option[*T] {
+	if !found {
+		return mo.None[*T]()
+	}
+	return mo.Some(&T{})
+}
+```
 
 ### `return-bool`
 
@@ -232,7 +241,14 @@ func IsAdmin() bool
 
 Functions, methods, methods of named interfaces, and named function types are checked. A function literal is exempt. So is a method that implements an interface: the interface's own declaration is reported instead, when it is in the package.
 
-Fix: return `mo.Option[User]`. For several values, return `mo.Option` of a struct, or of a tuple of [samber/lo](https://github.com/samber/lo), such as `lo.Tuple2`.
+Fix:
+
+```go
+func Find() mo.Option[User]
+func Cut() mo.Option[lo.Tuple2[string, string]]
+```
+
+For several values, use a struct, or a tuple of [samber/lo](https://github.com/samber/lo) such as `lo.Tuple2`.
 
 > [!NOTE]
 > A method is exempt only when molint sees the interface. It must be declared in the package, or in a package that the package imports directly. `MarshalJSON` in a package that does not import `encoding/json` is not exempt.
@@ -282,7 +298,12 @@ func Close() error
 </tbody>
 </table>
 
-Fix: return `mo.Result[*User]`.
+Fix:
+
+```go
+func Find() mo.Result[*User]
+func Load() mo.Result[lo.Tuple2[Config, Meta]]
+```
 
 ### `wrap-nil`
 
@@ -338,7 +359,13 @@ mo.Some[[]int](nil)
 </tbody>
 </table>
 
-Fix: `mo.None[*T]()`, a non-nil value, or a non-nil error.
+Fix:
+
+```go
+mo.None[*T]()          // the value is absent
+mo.Some(&T{})          // the value is there, and not nil
+mo.Err[T](ErrNotFound) // a failure, with a non-nil error
+```
 
 ### `result-zero`
 
@@ -353,7 +380,17 @@ func Load() mo.Result[Config] {
 
 A return, an argument, a store, a send, and a method call are uses. A comparison is not. A zero `mo.Option` is None, which is fine, so it is not reported.
 
-Fix: build it with `mo.Ok` or `mo.Err`.
+Fix:
+
+```go
+func Load() mo.Result[Config] {
+	cfg, err := read()
+	if err != nil {
+		return mo.Err[Config](err)
+	}
+	return mo.Ok(cfg)
+}
+```
 
 ### `unwrap-nil`
 
@@ -421,7 +458,16 @@ n.OrEmpty()
 </tbody>
 </table>
 
-Fix: `Get` with a check of `ok`, or `OrElse` with a non-nil value.
+Fix:
+
+```go
+if u, ok := o.Get(); ok {
+	use(u)
+}
+
+// Or, with a fallback that is not nil:
+u := o.OrElse(&guest)
+```
 
 ### `unwrap-discard`
 
@@ -482,7 +528,22 @@ o.Get()
 </tbody>
 </table>
 
-Fix: check `ok` or the error, or use `OrElse`.
+Fix:
+
+```go
+if v, ok := o.Get(); ok {
+	use(v)
+}
+
+// Or, for a mo.Result:
+v, err := r.Get()
+if err != nil {
+	return err
+}
+
+// Or, with a fallback:
+v := o.OrElse(10)
+```
 
 ## Ignoring a report
 
