@@ -9,8 +9,8 @@
 
 Go linter that enforces [samber/mo](https://github.com/samber/mo): absence is [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option), not a nil pointer or a trailing `bool`.
 
-> [!WARNING]
-> Work in progress. The rules are strict on purpose. They are meant for applications that choose [samber/mo](https://github.com/samber/mo), not for libraries.
+> [!NOTE]
+> The rules are strict on purpose. They are meant for applications that choose [samber/mo](https://github.com/samber/mo), not for libraries.
 
 ## Overview
 
