@@ -55,6 +55,31 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 | `flow` is split by concept: `site.go`, `tracer.go`, `store.go`, `return.go`, `range.go`, `pair.go` | Each name carries its file's concept, as `SiteAt`, `NilTracer`, `storesReaching`, `RangeReturns`. One file would have made every name carry `flow` |
 | `nilcheck.Unknown`, `typeutil.TrailingNone` and `typeutil.Option` stay exported with an `overexported` ignore | No other package names them, but each enum is incomplete without them |
 
+## Working with nilaway
+
+molint and nilaway do not exclude each other. molint stops the ways of writing that make a nil. nilaway finds the nils that still reach a dereference. So a rule that needs to follow values across functions belongs to nilaway, not here.
+
+A sample of 15 cases, with samber/mo v1.17.0 and nilaway `v0.0.0-20260918162853-acb8859b9031`, gave this:
+
+| Case | molint | nilaway |
+| --- | --- | --- |
+| Code as molint asks: `Get` with `ok` checked, `MustGet`, `OrElse(guest)`, `ForEach`, `IsPresent` then `MustGet`, and the same for `mo.Result` | Nothing | Nothing |
+| A map lookup dereferenced, as in `users[name].Name` | Nothing | Reported |
+| nil passed as an argument, then dereferenced | Nothing | Reported |
+| A field never set, dereferenced directly or through a function that returns it | Nothing | Nothing |
+| `return nil`, then the result dereferenced | At the `return` | At the dereference |
+| `u, _ := opt.Get()`, then `u.Name` | At `Get` | At the dereference |
+| `opt.OrEmpty().Name` | Reported | Nothing |
+
+What this means for molint:
+
+- nilaway does not report code that follows molint's rules. It reads the `ok` of `Get` as a guard.
+- Where both report one cause, molint reports the cause and nilaway the dereference. Fixing it as molint says clears both.
+- A field that is never set is missed by both. molint gave that case up with the non-nil contract.
+- nilaway does not know that `OrEmpty` gives nil for an empty Option. That is what `unwrap-nil` is for.
+
+The sample is small. Run both over a real application before relying on these rows.
+
 ## Following a value
 
 `flow.Tracer` tells whether a value may be a constant a rule looks for. `NilTracer` looks for nil, `TrueTracer` for the constant true, and `CheckingTracer` for any constant, such as a zero `mo.Result`.
