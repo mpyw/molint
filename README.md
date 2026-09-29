@@ -46,13 +46,55 @@ molint reads the shape of signatures, and follows values only inside one functio
 
 | Method | Command | Needs |
 | --- | --- | --- |
+| **[mise](https://mise.jdx.dev/)** *(recommended)* | `mise use "github:mpyw/molint@0.1.0"` | Nothing. Installs the prebuilt binary |
 | `go tool` | `go get -tool github.com/mpyw/molint/cmd/molint@latest` | Go 1.27+ |
 | `go install` | `go install github.com/mpyw/molint/cmd/molint@latest` | Go 1.27+ |
+| Release archive | See below | Nothing |
 
 ```bash
-molint ./...                                 # or: go tool molint ./...
-go vet -vettool=$(which molint) ./...        # through go vet, with its cache
+molint ./...
 ```
+
+<details>
+<summary>Pin a version, run through <code>go vet</code>, or install from an archive</summary>
+
+`mise use` pins the version in the project's `mise.toml`, so every checkout and CI run the same one. Add `-g` to install it for every project on your machine instead.
+
+```toml
+[tools]
+"github:mpyw/molint" = "0.1.0"
+```
+
+As a tool dependency in `go.mod`:
+
+```bash
+go get -tool github.com/mpyw/molint/cmd/molint@latest
+go tool molint ./...
+```
+
+Through `go vet`, which runs it with the same package loading as the rest of your vet checks, and caches it:
+
+```bash
+go vet -vettool=$(which molint) ./...
+```
+
+Without installing anything:
+
+```bash
+go run github.com/mpyw/molint/cmd/molint@latest ./...
+```
+
+From a release archive, verified against the published checksums:
+
+```bash
+VERSION=0.1.0
+curl -LO "https://github.com/mpyw/molint/releases/download/v${VERSION}/molint_${VERSION}_darwin_arm64.tar.gz"
+curl -LO "https://github.com/mpyw/molint/releases/download/v${VERSION}/checksums.txt"
+shasum -a 256 -c checksums.txt --ignore-missing
+tar xzf "molint_${VERSION}_darwin_arm64.tar.gz"
+```
+
+</details>
 
 ## Rules
 
