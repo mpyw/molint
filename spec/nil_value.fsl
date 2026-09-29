@@ -3,12 +3,16 @@
 // in design/rules.md.
 //
 // The program has a loop and a join. The loop carries two φ-nodes, a and b.
-// The join carries the returned φ-node, r, with three edges:
+// Each round may check its new value before taking it, which puts a nil check
+// on an edge of a nested φ-node. The join carries the returned φ-node, r, with
+// three edges:
 //
 //   a, b := A0, B0                 entry operands: nil, &T{}, or f()
 //   for cond() {
-//     a, b = A1, B1                back-edge operands: nil, &T{}, f(), a or b
-//   }
+//     x, y := A1, B1               back-edge operands: nil, &T{}, f(), a or b
+//     if GA(x) { a = x }           GA: no check (always take x),
+//     if GB(y) { b = y }             x == nil, or x != nil
+//   }                              (both read a and b as the round found them)
 //   switch {                       three edges into the join; each edge may sit
 //   case c0: r = R0                under a check of its own operand, as in
 //   case c1: r = R1                  if R0 == nil { r = R0 }   (IsNil)
@@ -25,15 +29,22 @@
 // An edge under NotNil brings none. An edge under IsNil brings one, whatever
 // its operand. A value from outside is not one.
 //
+// The run keeps its own record of each value: the nil constant, a nil from
+// outside, a nil that passed a nil check (NilChecked), or non-nil. The rule
+// never reads that record.
+//
 // The claim. The rule reports r exactly when some run of this program returns
 // a nil that is a constant's, or that passed a nil check. In detail:
 //
-//   ReportMeansANilIsReturned  when r is reported, the witness run below
-//                              is never blocked and returns such a nil.
-//                              So some run returns it.
-//   ConstantNilIsReported      whenever a run returns a nil constant, r is
-//                              reported. A nil check on the way is judged
-//                              at its own edge, so it cannot hide one.
+//   ReportMeansANilIsReturned  when r is reported, the witness run below is
+//                              never blocked and returns such a nil. So some
+//                              run returns it.
+//   CheckedOrConstantNilIsReported
+//                              whenever a run returns such a nil, r is
+//                              reported. A nil check on the way is judged at
+//                              its own edge, so it cannot hide one.
+//   CheckedEdgeIsReported      whenever a run returns through an edge under
+//                              IsNil, r is reported.
 //
 // A nil from outside that no check tests is not reported. That is the scope
 // the rules give to nilaway. ExtNilIsNotReported witnesses it.
@@ -42,45 +53,49 @@
 // start, and it never changes. The run then chooses the branches, the number
 // of rounds, and what each f() gives.
 //
-// The witness run is built from the rule's verdict alone. It takes the first
-// edge of the join that brings a nil. It makes every f() nil when that edge
-// is under IsNil, and non-nil otherwise. It goes round the loop just as often
-// as the nil needs to reach the φ-node: a nil can take two rounds, as in
-// `a, b = b, nil`.
+// The witness run takes the first edge of the join that the rule says brings
+// a nil. Every f() gives non-nil, or every f() gives nil, and the loop goes
+// round zero to three times: the first of these choices that gives the edge
+// a nil constant or a checked nil. Three rounds are needed when a nil from
+// outside is checked on b's edge and then copied into a. The choice is found by running the
+// program forward under each; the invariants check that forward run against
+// the real one.
 //
 // ASSUME-1: branches are taken as independent, and only a nil check of the
 //   value itself narrows the paths. That is the rule's own definition: "nil
 //   on some path". Correlated conditions are an accepted gap of the rule,
 //   documented by nil_value_correlated.fsl.
-// ASSUME-2: a nil check under IsNil tests a value that some run makes nil.
-//   A check that can never succeed, as in `p := &T{}; if p == nil { return p
-//   }`, is an accepted gap of the rule: it reports that dead code.
+// ASSUME-2: every nil check can succeed and can fail on some run: an IsNil
+//   check tests a value that may be nil, a NotNil check one that may be
+//   non-nil. A check that can never succeed, as in `p := &T{}; if p == nil {
+//   return p }`, is an accepted gap of the rule: it reports that dead code.
 //   nil_value_dead_check.fsl documents it. This spec leaves such programs out
 //   because the claim is about runs, and dead code has none.
 // ASSUME-3 (representation only): two loop φ-nodes, three join edges, one
 //   check per edge. Two φ-nodes are enough for a nil to need two rounds.
-// ASSUME-4 (representation only): a value is tracked only as nil from a
-//   constant, nil from outside, or non-nil. Which non-nil value does not
-//   matter to the rule.
-// ASSUME-5: ChangeType is not modeled. The rule and the run both see through
+// ASSUME-4: ChangeType is not modeled. The rule and the run both see through
 //   it, so it adds nothing to check.
 spec NilValue {
   enum Op { Nil, Alloc, Ext, PhiA, PhiB }
   enum Guard { NoCheck, IsNil, NotNil }
-  enum Val { NilConst, NilExt, NonNil }
-  enum Pc { Ready, Judged, Loop, Join, Returned, Aborted }
+  enum Val { NilConst, NilExt, NilChecked, NonNil }
+  enum Pc { Ready, Loop, Join, Returned, Aborted }
   type Edge = 0..2
-  type Iter = 0..3
-  type Bit = 0..24
+  type Iter = 0..4
+  type Bit = 0..28
+  // A forward-run slot: all f() non-nil (0..3) or all nil (4..7), after 0..3 rounds.
+  type Slot = 0..7
 
   state {
     pc: Pc,
     // free choice bits that pick the program in init
     ch: Map<Bit, Bool>,
-    a0: Op, b0: Op, a1: Op, b1: Op,
+    a0: Op, b0: Op, a1: Op, b1: Op, ga: Guard, gb: Guard,
     r: Map<Edge, Op>, g: Map<Edge, Guard>,
     // the run
     a: Val, b: Val, iters: Iter, rv: Val, taken: Edge,
+    // the forward runs the witness is chosen from, fixed with the program
+    fa: Map<Slot, Val>, fb: Map<Slot, Val>,
     // the rule's verdict and its witness, fixed with the program
     rep: Bool, w: Edge, wnil: Bool, wrounds: Iter,
     // the run has made the witness's choices so far
@@ -100,80 +115,106 @@ spec NilValue {
   init {
     pc = Ready
     a0 = pick3(0)  b0 = pick3(2)  a1 = pick5(4)  b1 = pick5(7)
-    forall k: Edge { r[k] = pick5(10 + 3 * k)  g[k] = pickGuard(19 + 2 * k) }
+    ga = pickGuard(10)  gb = pickGuard(12)
+    forall k: Edge { r[k] = pick5(14 + 3 * k)  g[k] = pickGuard(23 + 2 * k) }
     a = NonNil  b = NonNil  iters = 0  rv = NonNil  taken = 0
-    rep = false  w = 0  wnil = false  wrounds = 0
+    // The forward runs, then the verdict and the witness. init assigns in
+    // order, so each line reads the ones above it. The verdict reads only the
+    // program.
+    fa[0] = evAt(a0, false, NonNil, NonNil)  fb[0] = evAt(b0, false, NonNil, NonNil)
+    fa[4] = evAt(a0, true, NonNil, NonNil)  fb[4] = evAt(b0, true, NonNil, NonNil)
+    fa[1] = step(false, 0)  fb[1] = stepB(false, 0)
+    fa[5] = step(true, 0)  fb[5] = stepB(true, 0)
+    fa[2] = step(false, 1)  fb[2] = stepB(false, 1)
+    fa[6] = step(true, 1)  fb[6] = stepB(true, 1)
+    fa[3] = step(false, 2)  fb[3] = stepB(false, 2)
+    fa[7] = step(true, 2)  fb[7] = stepB(true, 2)
+    rep = reported()  w = wk()  wnil = wp()  wrounds = wi()
     follow = false
   }
 
   // --- the rule: a pure function of the program ---------------------------------
 
   def src(o: Op) = o == Nil
-  def nilA() = src(a0) or src(a1) or (a1 == PhiB and (src(b0) or src(b1)))
-  def nilB() = src(b0) or src(b1) or (b1 == PhiA and (src(a0) or src(a1)))
+  // An edge of a loop φ-node that brings a nil without going through the
+  // other loop φ-node.
+  def baseA() = src(a0) or ga == IsNil or (ga == NoCheck and src(a1))
+  def baseB() = src(b0) or gb == IsNil or (gb == NoCheck and src(b1))
+  def nilA() = baseA() or (ga == NoCheck and a1 == PhiB and baseB())
+  def nilB() = baseB() or (gb == NoCheck and b1 == PhiA and baseA())
   def nilOp(o: Op) = src(o) or (o == PhiA and nilA()) or (o == PhiB and nilB())
   def brings(k: Edge) = g[k] == IsNil or (g[k] == NoCheck and nilOp(r[k]))
   def reported() = exists k: Edge { brings(k) }
 
-  // --- what may be nil at run time, counting values from outside ----------------
+  // --- ASSUME-2: what may be nil, or non-nil, on some run -------------------------
 
   def may(o: Op) = o == Nil or o == Ext
-  def mayA() = may(a0) or may(a1) or (a1 == PhiB and (may(b0) or may(b1)))
-  def mayB() = may(b0) or may(b1) or (b1 == PhiA and (may(a0) or may(a1)))
-  def mayOp(o: Op) = may(o) or (o == PhiA and mayA()) or (o == PhiB and mayB())
-
-  // --- the program ----------------------------------------------------------------
-
-  // ASSUME-2: no check under IsNil is dead.
-  def configOk() = forall k: Edge { g[k] == IsNil => mayOp(r[k]) }
+  def nn(o: Op) = o == Alloc or o == Ext
+  def mayNilA() =
+    may(a0) or (ga != NotNil and (may(a1) or (a1 == PhiB and (may(b0) or (gb != NotNil and may(b1))))))
+  def mayNilB() =
+    may(b0) or (gb != NotNil and (may(b1) or (b1 == PhiA and (may(a0) or (ga != NotNil and may(a1))))))
+  def mayNonNilA() =
+    nn(a0) or (ga != IsNil and (nn(a1) or (a1 == PhiB and (nn(b0) or (gb != IsNil and nn(b1))))))
+  def mayNonNilB() =
+    nn(b0) or (gb != IsNil and (nn(b1) or (b1 == PhiA and (nn(a0) or (ga != IsNil and nn(a1))))))
+  def mayNil(o: Op) = may(o) or (o == PhiA and mayNilA()) or (o == PhiB and mayNilB())
+  def mayNonNil(o: Op) = nn(o) or (o == PhiA and mayNonNilA()) or (o == PhiB and mayNonNilB())
+  def live(c: Guard, o: Op) = (c == IsNil => mayNil(o)) and (c == NotNil => mayNonNil(o))
   def entryShape() =
     (a0 == Nil or a0 == Alloc or a0 == Ext) and (b0 == Nil or b0 == Alloc or b0 == Ext)
+  def configOk() = live(ga, a1) and live(gb, b1) and (forall k: Edge { live(g[k], r[k]) })
 
-  // --- the witness run, chosen from the rule's verdict ----------------------------
+  // --- the run's semantics --------------------------------------------------------
 
-  def wk() = if brings(0) then 0 else if brings(1) then 1 else 2
-  def wx() = g[wk()] == IsNil
-  // A source of a nil under the witness's choice for f().
-  def ws(o: Op) = if wx() then may(o) else src(o)
-  def roundsA() =
-    if ws(a0) then 0 else if ws(a1) then 1
-    else if a1 == PhiB and ws(b0) then 1 else 2
-  def roundsB() =
-    if ws(b0) then 0 else if ws(b1) then 1
-    else if b1 == PhiA and ws(a0) then 1 else 2
-  def rounds() =
-    if r[wk()] == PhiA then roundsA() else if r[wk()] == PhiB then roundsB() else 0
-
-  // --- the run --------------------------------------------------------------------
-
-  // What an operand evaluates to. nilOut is the value f() gives this time.
-  def ev(o: Op, nilOut: Bool) =
+  // What an operand gives, with x and y the values of a and b.
+  def evAt(o: Op, nilOut: Bool, x: Val, y: Val) =
     if o == Nil then NilConst
     else if o == Alloc then NonNil
     else if o == Ext then (if nilOut then NilExt else NonNil)
-    else if o == PhiA then a
-    else b
+    else if o == PhiA then x
+    else y
   def passes(c: Guard, v: Val) =
     if c == IsNil then v != NonNil else if c == NotNil then v == NonNil else true
+  // A nil from outside that passes x == nil is recorded as checked.
+  def mark(c: Guard, v: Val) = if c == IsNil and v == NilExt then NilChecked else v
+  // One round's update of a loop φ-node: take the new value if it passes.
+  def upd(c: Guard, v: Val, old: Val) = if passes(c, v) then mark(c, v) else old
+  def goodNil(v: Val) = v == NilConst or v == NilChecked
 
-  // Fixes the verdict and the witness. They read only the program.
-  action judge() {
-    requires pc == Ready  requires configOk()
-    pc = Judged
-    rep = reported()  w = wk()  wnil = wx()  wrounds = rounds()
-  }
+  // --- the witness, found by running forward under each choice ------------------
+
+  // The forward runs are computed in init, a round at a time.
+  def slot(p: Bool, i: Iter) = (if p then 4 else 0) + i
+  def step(p: Bool, i: Iter) =
+    upd(ga, evAt(a1, p, fa[slot(p, i)], fb[slot(p, i)]), fa[slot(p, i)])
+  def stepB(p: Bool, i: Iter) =
+    upd(gb, evAt(b1, p, fa[slot(p, i)], fb[slot(p, i)]), fb[slot(p, i)])
+
+  def atJoin(k: Edge, p: Bool, i: Iter) = evAt(r[k], p, fa[slot(p, i)], fb[slot(p, i)])
+  def okAt(k: Edge, p: Bool, i: Iter) =
+    passes(g[k], atJoin(k, p, i)) and goodNil(mark(g[k], atJoin(k, p, i)))
+
+  def wk() = if brings(0) then 0 else if brings(1) then 1 else 2
+  def wp() = not (exists i: Iter { i <= 3 and okAt(wk(), false, i) })
+  def wi() =
+    if okAt(wk(), wp(), 0) then 0 else if okAt(wk(), wp(), 1) then 1
+    else if okAt(wk(), wp(), 2) then 2 else 3
+
+  // --- the run --------------------------------------------------------------------
 
   action enter(na: Bool, nb: Bool) {
-    requires pc == Judged
+    requires pc == Ready  requires configOk()
     pc = Loop
-    a = ev(a0, na)  b = ev(b0, nb)
+    a = evAt(a0, na, a, b)  b = evAt(b0, nb, a, b)
     follow = rep and na == wnil and nb == wnil
   }
 
   action round(na: Bool, nb: Bool) {
     requires pc == Loop
-    a = ev(a1, na)  b = ev(b1, nb)
-    iters = min(iters + 1, 3)
+    a = upd(ga, evAt(a1, na, a, b), a)
+    b = upd(gb, evAt(b1, nb, a, b), b)
+    iters = min(iters + 1, 4)
     follow = follow and iters < wrounds and na == wnil and nb == wnil
   }
 
@@ -184,9 +225,9 @@ spec NilValue {
   }
 
   action take(k: Edge, n: Bool) {
-    requires pc == Join  requires passes(g[k], ev(r[k], n))
+    requires pc == Join  requires passes(g[k], evAt(r[k], n, a, b))
     pc = Returned  taken = k
-    rv = ev(r[k], n)
+    rv = mark(g[k], evAt(r[k], n, a, b))
     follow = follow and k == w and n == wnil
   }
 
@@ -199,52 +240,45 @@ spec NilValue {
   // A program outside ASSUME-2 never runs.
   terminal { pc == Returned or pc == Aborted or (pc == Ready and not configOk()) }
 
+
+
   // --- what is proved -------------------------------------------------------------
 
-  // What the witness needs of a value: nil, and from a constant unless the
-  // witness's edge checks it.
-  def witnessNil(v: Val) = if wnil then v != NonNil else v == NilConst
-
   invariant ReportMeansANilIsReturned {
-    (follow and pc == Join => passes(g[w], ev(r[w], wnil)))
-    and (follow and pc == Returned => witnessNil(rv))
+    (follow and pc == Join => passes(g[w], evAt(r[w], wnil, a, b)))
+    and (follow and pc == Returned => goodNil(rv))
   }
+  invariant CheckedOrConstantNilIsReported { (pc == Returned and goodNil(rv)) => reported() }
+  invariant CheckedEdgeIsReported { (pc == Returned and g[taken] == IsNil) => reported() }
 
-  invariant ConstantNilIsReported { (pc == Returned and rv == NilConst) => reported() }
-
-  // --- auxiliary: what makes the two inductive ------------------------------------
+  // --- auxiliary: what makes them inductive ---------------------------------------
 
   invariant ProgramShape { entryShape() and (pc != Ready => configOk()) }
-  invariant VerdictFixed {
-    pc != Ready =>
-      (rep == reported() and w == wk() and wnil == wx() and wrounds == rounds())
+  invariant ForwardFixed {
+    fa[0] == evAt(a0, false, NonNil, NonNil) and fb[0] == evAt(b0, false, NonNil, NonNil)
+    and fa[4] == evAt(a0, true, NonNil, NonNil) and fb[4] == evAt(b0, true, NonNil, NonNil)
+    and fa[1] == step(false, 0) and fb[1] == stepB(false, 0)
+    and fa[5] == step(true, 0) and fb[5] == stepB(true, 0)
+    and fa[2] == step(false, 1) and fb[2] == stepB(false, 1)
+    and fa[6] == step(true, 1) and fb[6] == stepB(true, 1)
+    and fa[3] == step(false, 2) and fb[3] == stepB(false, 2)
+    and fa[7] == step(true, 2) and fb[7] == stepB(true, 2)
   }
+  invariant VerdictFixed { rep == reported() and w == wk() and wnil == wp() and wrounds == wi() }
   invariant FreshBeforeRun {
-    (pc == Ready or pc == Judged) =>
+    pc == Ready =>
       (a == NonNil and b == NonNil and iters == 0 and not follow)
   }
   invariant FollowOnlyWhenReported { follow => rep }
-  invariant NilConstTraced { (a == NilConst => nilA()) and (b == NilConst => nilB()) }
-  invariant ReturnedTaken { pc == Returned => rv == ev(r[taken], rv == NilExt) }
+  invariant NilTraced { (goodNil(a) => nilA()) and (goodNil(b) => nilB()) }
+  invariant ReturnedTraced { pc == Returned => (goodNil(rv) => (g[taken] == IsNil or (g[taken] == NoCheck and (rv == NilConst and (r[taken] == Nil or (r[taken] == PhiA and goodNil(a)) or (r[taken] == PhiB and goodNil(b))) or rv == NilChecked and ((r[taken] == PhiA and goodNil(a)) or (r[taken] == PhiB and goodNil(b))))))) }
   invariant FollowWithinRounds {
     (follow and pc == Loop => iters <= wrounds) and (follow and pc == Join => iters == wrounds)
   }
-  // Under the witness's choices, where the loop φ-nodes hold a nil.
-  invariant WitnessEntry {
-    (follow and (pc == Loop or pc == Join) and iters == 0) =>
-      ((ws(a0) => witnessNil(a)) and (ws(b0) => witnessNil(b)))
-  }
-  invariant WitnessBackEdge {
-    (follow and (pc == Loop or pc == Join) and iters >= 1) =>
-      ((ws(a1) => witnessNil(a)) and (ws(b1) => witnessNil(b)))
-  }
-  invariant WitnessRoundOne {
-    (follow and (pc == Loop or pc == Join) and iters == 1) =>
-      ((a1 == PhiB and ws(b0) => witnessNil(a)) and (b1 == PhiA and ws(a0) => witnessNil(b)))
-  }
-  invariant WitnessRoundTwo {
-    (follow and (pc == Loop or pc == Join) and iters == 2) =>
-      ((a1 == PhiB and ws(b1) => witnessNil(a)) and (b1 == PhiA and ws(a1) => witnessNil(b)))
+  // Under the witness's choices, the run is the forward run of the witness.
+  invariant WitnessRuns {
+    (follow and (pc == Loop or pc == Join)) =>
+      (iters <= 3 and a == fa[slot(wnil, iters)] and b == fb[slot(wnil, iters)])
   }
 
   // --- witnesses ------------------------------------------------------------------
@@ -252,23 +286,35 @@ spec NilValue {
   // a, b = b, nil: the nil reaches a on the second round.
   reachable NilAfterTwoRounds {
     pc == Returned and rv == NilConst and r[taken] == PhiA and a1 == PhiB and b1 == Nil
-    and a0 == Alloc and b0 == Alloc and iters == 2
+    and ga == NoCheck and gb == NoCheck and a0 == Alloc and b0 == Alloc and iters == 2
   }
   // if p == nil { p = def }; return p, where p may be nil.
   reachable CheckStopsTheNil {
     pc == Returned and not reported() and nilA() and r[0] == PhiA and g[0] == NotNil
     and r[1] == Alloc and g[1] == NoCheck and r[2] == Alloc
   }
+  // for ... { if x := f(); x == nil { a = x } }: a nil checked on a loop edge.
+  reachable CheckedOnALoopEdge {
+    pc == Returned and follow and ga == IsNil and a1 == Ext and r[taken] == PhiA
+    and g[taken] == NoCheck and rv == NilChecked
+  }
+  // for ... { if b != nil { a = b }; b = &T{} } with b nil on entry: the
+  // check on a's loop edge stops the nil b brings.
+  reachable LoopCheckStopsTheEdge {
+    pc == Returned and not reported() and ga == NotNil and a1 == PhiB and a0 == Alloc
+    and b0 == Nil and b1 == Alloc and nilB() and r[0] == PhiA and g[0] == NoCheck
+  }
   reachable CheckedOutsideNilReported {
-    pc == Returned and reported() and r[taken] == Ext and g[taken] == IsNil and rv == NilExt
+    pc == Returned and reported() and r[taken] == Ext and g[taken] == IsNil and rv == NilChecked
   }
   reachable CheckedPhiNilReported {
     pc == Returned and reported() and r[taken] == PhiB and g[taken] == IsNil
-    and not nilB() and rv == NilExt
+    and not nilB() and rv == NilChecked
   }
   reachable ExtNilIsNotReported { pc == Returned and rv == NilExt and not reported() }
   // The witness runs to the return, round the loop twice, and through a check.
   reachable WitnessTakesTwoRounds { follow and pc == Returned and wrounds == 2 }
+  reachable WitnessTakesThreeRounds { follow and pc == Returned and wrounds == 3 }
   reachable WitnessThroughACheck { follow and pc == Returned and wnil and r[w] == PhiA }
   // A report says some run returns nil, not this one.
   reachable ReportedRunReturnsNonNil { pc == Returned and reported() and rv == NonNil }

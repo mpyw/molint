@@ -254,7 +254,7 @@ molint -return-bool=false ./...  # every rule except return-bool and return-erro
 | --- | --- |
 | A nil that comes from outside the function, or from a field or a call | molint follows values only inside one function |
 | Branches whose conditions depend on each other, as in `if c { p = x }; if c { return p }` | Branches are taken as independent, so this is reported although no run returns nil. The same holds for a nil check that can never succeed |
-| A nil check on a variable that SSA does not lift, before a bare return. `if p == nil { p = def }` in a function with a `defer` is one | The stores reaching the load are followed, and the check on the loaded value is not. A nil constant stored on an earlier path is then reported |
+| A nil check, or a comparison with the zero `Result`, on a variable that SSA does not lift. `if p == nil { p = def }` on a captured `p`, or on a named result in a function with a `defer`, is one | A later load follows the stores that reach it. The check on an earlier load of the same variable is not carried over. A nil constant stored on an earlier path is then reported |
 | `mo.TupleToOption`, `mo.TupleToResult`, `mo.EmptyableToOption` | They check their arguments at run time |
 | A zero `Result` inside a struct | Fields are not followed |
 | A constructor or method of mo reached indirectly. That is through a parameter, a field, a method value (`f := o.OrEmpty; f()`), or a method expression (`mo.Option[*T].OrElse(o, nil)`) | They are called through a function value, a bound wrapper, or a thunk, which is not followed |

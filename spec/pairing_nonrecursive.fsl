@@ -1,10 +1,10 @@
-// FAILS ON PURPOSE. This is the pairing rule without the recursion that
-// design/rules.md now asks for, and the counterexample is the reason for it.
+// FAILS ON PURPOSE. This is the pairing rule without the recursion into an
+// earlier block, and the counterexample is the reason for it.
 //
-// The rule judges each edge into the return's φ-node block, but judges a
-// φ-node of an earlier block whole, even when both values on the edge are
-// φ-nodes of that block. The inner join then pairs a nil from one of its edges
-// with a nil error from the other:
+// The rule judges each edge into the return's φ-node block, but judges
+// φ-nodes of an earlier block whole, even when both values on the edge are
+// φ-nodes of that block. The earlier block then pairs a nil from one of its
+// edges with a nil error from another:
 //
 //   var u *T
 //   var err error
@@ -16,106 +16,172 @@
 //   }
 //   return u, err                 reported: "F returns a nil *T with a nil error"
 //
-// No run returns nil with a nil error. The program, the run and the claim are
-// those of pairing.fsl, except for pairs() and the witness in E.
+// No run returns nil with a nil error. In pairing.fsl the earlier block is the
+// loop: its body join and its header.
+//
+// The program, the run and the claim are those of pairing.fsl, except for
+// pairsOn(). The run is limited to programs that pairing.fsl's rule does not
+// report, so every report here is this rule's own.
 spec PairingNonRecursive {
-  enum Op { Nil, Alloc, Ext, FromE }
-  enum Sec { Bad, Good, Out, SFromE }
-  enum Val { NilConst, NilExt, NonNil }
+  enum UOp { UKeep, Nil, Alloc, Ext, UFromH }
+  enum SOp { SKeep, Bad, Good, Out, SFromH }
+  enum Guard { NoCheck, IsNil, NotNil }
+  enum Val { NilConst, NilExt, NilChecked, NonNil }
   enum SVal { BadConst, BadExt, GoodVal }
-  enum Pc { Ready, Judged, Inner, Returned }
+  enum Pc { Ready, Loop, Join, Returned, Aborted }
   type Edge = 0..2
-  type Pre = 0..1
-  type Bit = 0..19
+  type Arm = 0..1
+  // An arm, or 2: no arm.
+  type Step = 0..2
+  type Rounds = 0..2
+  type Bit = 0..29
 
   state {
     pc: Pc,
-    // free choice bits that pick the program in init
     ch: Map<Bit, Bool>,
     // the program
-    pu: Map<Pre, Op>, ps: Map<Pre, Sec>, u: Map<Edge, Op>, s: Map<Edge, Sec>,
+    u0: UOp, s0: SOp, bu: Map<Arm, UOp>, bs: Map<Arm, SOp>,
+    ju: Map<Edge, UOp>, js: Map<Edge, SOp>, jg: Map<Edge, Guard>,
     // the verdict and its witness
-    rep: Bool, wk: Edge, we: Pre,
-    // the run
-    iu: Val, isv: SVal, ru: Val, rs: SVal, follow: Bool
+    rep: Bool, wk: Edge, wx: Step, wy: Step, wnil: Bool,
+    // the run: the values, and which store each came from
+    hu: Val, hs: SVal, uSrc: Step, sSrc: Step, uLater: Bool, lastArm: Step,
+    rounds: Rounds, taken: Edge, ru: Val, rs: SVal, follow: Bool
   }
 
-  def pickU(i: Bit) =
-    if ch[i] then (if ch[i + 1] then Nil else Alloc) else (if ch[i + 1] then Ext else FromE)
-  def pickS(i: Bit) =
-    if ch[i] then (if ch[i + 1] then Bad else Good) else (if ch[i + 1] then Out else SFromE)
-  // The inner join has no FromE: its operands are constants or from outside.
-  def innerU(i: Bit) = if ch[i] then Nil else if ch[i + 1] then Alloc else Ext
-  def innerS(i: Bit) = if ch[i] then Bad else if ch[i + 1] then Good else Out
-
-  init {
-    pc = Ready
-    forall k: Edge { u[k] = pickU(4 * k)  s[k] = pickS(4 * k + 2) }
-    forall e: Pre { pu[e] = innerU(12 + 4 * e)  ps[e] = innerS(14 + 4 * e) }
-    rep = false  wk = 0  we = 0
-    iu = NonNil  isv = GoodVal  ru = NonNil  rs = GoodVal  follow = false
-  }
+  def pickEntryU(i: Bit) = if ch[i] then Nil else if ch[i + 1] then Alloc else Ext
+  def pickEntryS(i: Bit) = if ch[i] then Bad else if ch[i + 1] then Good else Out
+  def pickArmU(i: Bit) =
+    if ch[i] then (if ch[i + 1] then UKeep else Nil) else (if ch[i + 1] then Alloc else Ext)
+  def pickArmS(i: Bit) =
+    if ch[i] then (if ch[i + 1] then SKeep else Bad) else (if ch[i + 1] then Good else Out)
+  def pickJoinU(i: Bit) =
+    if ch[i] then (if ch[i + 1] then Nil else Alloc) else (if ch[i + 1] then Ext else UFromH)
+  def pickJoinS(i: Bit) =
+    if ch[i] then (if ch[i + 1] then Bad else Good) else (if ch[i + 1] then Out else SFromH)
+  def pickGuard(i: Bit) = if ch[i] then NoCheck else if ch[i + 1] then IsNil else NotNil
 
   // --- the rule -------------------------------------------------------------------
 
-  def innerNil() = exists e: Pre { pu[e] == Nil }
-  def innerBad() = exists e: Pre { ps[e] == Bad }
-  def innerPairs(e: Pre) = pu[e] == Nil and ps[e] == Bad
-  def uNil(o: Op) = o == Nil or (o == FromE and innerNil())
-  def sBad(o: Sec) = o == Bad or (o == SFromE and innerBad())
-  def bothFromE(k: Edge) = u[k] == FromE and s[k] == SFromE
-  // THE NAIVE RULE: the φ-nodes of E are judged whole.
-  def pairs(k: Edge) = uNil(u[k]) and sBad(s[k])
-  def reported() = exists k: Edge { pairs(k) }
+  // The last value set on the path x, then y.
+  def finU(x: Step, y: Step) =
+    if y != 2 and bu[y] != UKeep then bu[y] else if x != 2 and bu[x] != UKeep then bu[x] else u0
+  def finS(x: Step, y: Step) =
+    if y != 2 and bs[y] != SKeep then bs[y] else if x != 2 and bs[x] != SKeep then bs[x] else s0
+  def path(x: Step, y: Step) = x == 2 => y == 2
+  def uAt(k: Edge, x: Step, y: Step) = if ju[k] == UFromH then finU(x, y) else ju[k]
+  def sAt(k: Edge, x: Step, y: Step) = if js[k] == SFromH then finS(x, y) else js[k]
+  def uNilAt(k: Edge, x: Step, y: Step) =
+    if jg[k] == IsNil then (uAt(k, x, y) == Nil or uAt(k, x, y) == Ext)
+    else jg[k] == NoCheck and uAt(k, x, y) == Nil
+  def pairs(k: Edge, x: Step, y: Step) =
+    path(x, y) and uNilAt(k, x, y) and sAt(k, x, y) == Bad
+  // THE NAIVE RULE: the values from the loop are judged whole.
+  def uOk(k: Edge) = exists x: Step { exists y: Step { path(x, y) and uNilAt(k, x, y) } }
+  def sOk(k: Edge) = exists x: Step { exists y: Step { path(x, y) and sAt(k, x, y) == Bad } }
+  def pairsOn(k: Edge) = uOk(k) and sOk(k)
+  // The rule of pairing.fsl, to pick the programs it does not report.
+  def provedReported() = exists k: Edge { exists x: Step { exists y: Step { pairs(k, x, y) } } }
+  def reported() = exists k: Edge { pairsOn(k) }
 
-  // The witness: the edge of J the rule judged, and the edge of E it needs.
-  def witnessEdge() = if pairs(0) then 0 else if pairs(1) then 1 else 2
-  def witnessPre(k: Edge) =
-    if u[k] == FromE then (if pu[0] == Nil then 0 else 1)
-    else (if ps[0] == Bad then 0 else 1)
+  // The witness: the first edge and path the rule found.
+  def firstEdge() = if pairsOn(0) then 0 else if pairsOn(1) then 1 else 2
+  // The witness runs the path that makes the error Bad.
+  def sPath(k: Edge, x: Step, y: Step) = path(x, y) and sAt(k, x, y) == Bad
+  def firstX(k: Edge) =
+    if exists y: Step { sPath(k, 0, y) } then 0 else if exists y: Step { sPath(k, 1, y) } then 1 else 2
+  def firstY(k: Edge, x: Step) = if sPath(k, x, 0) then 0 else if sPath(k, x, 1) then 1 else 2
+  def len(x: Step, y: Step) = (if x != 2 then 1 else 0) + (if y != 2 then 1 else 0)
 
-  action judge() {
-    requires pc == Ready
-    pc = Judged
-    rep = reported()  wk = witnessEdge()  we = witnessPre(witnessEdge())
+  // --- ASSUME-2: every check can succeed and fail ---------------------------------
+
+  def mayNilU(o: UOp) = o == Nil or o == Ext
+  def mayNonNilU(o: UOp) = o == Alloc or o == Ext
+  def loopMay(nilSide: Bool) =
+    (if nilSide then mayNilU(u0) else mayNonNilU(u0))
+    or (exists j: Arm { if nilSide then mayNilU(bu[j]) else mayNonNilU(bu[j]) })
+  def live(k: Edge) =
+    (jg[k] == IsNil => (if ju[k] == UFromH then loopMay(true) else mayNilU(ju[k])))
+    and (jg[k] == NotNil => (if ju[k] == UFromH then loopMay(false) else mayNonNilU(ju[k])))
+  def configOk() = forall k: Edge { live(k) }
+
+  init {
+    pc = Ready
+    u0 = pickEntryU(0)  s0 = pickEntryS(2)
+    forall j: Arm { bu[j] = pickArmU(4 + 4 * j)  bs[j] = pickArmS(6 + 4 * j) }
+    forall k: Edge { ju[k] = pickJoinU(12 + 6 * k)  js[k] = pickJoinS(14 + 6 * k)  jg[k] = pickGuard(16 + 6 * k) }
+    // The verdict and the witness read only the program set above.
+    rep = reported()  wk = firstEdge()  wx = firstX(firstEdge())
+    wy = firstY(firstEdge(), firstX(firstEdge()))  wnil = jg[firstEdge()] == IsNil
+    hu = NonNil  hs = GoodVal  uSrc = 2  sSrc = 2  uLater = false  lastArm = 2
+    rounds = 0  taken = 0  ru = NonNil  rs = GoodVal  follow = false
   }
 
   // --- the run --------------------------------------------------------------------
 
-  def ev(o: Op, nilOut: Bool) =
+  def ev(o: UOp, nilOut: Bool, old: Val) =
     if o == Nil then NilConst else if o == Alloc then NonNil
-    else if o == Ext then (if nilOut then NilExt else NonNil)
-    else iu
-  def evs(o: Sec, badOut: Bool) =
+    else if o == Ext then (if nilOut then NilExt else NonNil) else old
+  def evs(o: SOp, badOut: Bool, old: SVal) =
     if o == Bad then BadConst else if o == Good then GoodVal
-    else if o == Out then (if badOut then BadExt else GoodVal)
-    else isv
+    else if o == Out then (if badOut then BadExt else GoodVal) else old
+  def passes(c: Guard, v: Val) =
+    if c == IsNil then v != NonNil else if c == NotNil then v == NonNil else true
+  def mark(c: Guard, v: Val) = if c == IsNil and v == NilExt then NilChecked else v
+  def goodNil(v: Val) = v == NilConst or v == NilChecked
 
-  // The run passes E even when it takes an edge of J that bypasses it. The
-  // values E would hold are then never read.
-  action passInner(e: Pre, nu: Bool, bs: Bool) {
-    requires pc == Judged
-    pc = Inner
-    iu = ev(pu[e], nu)  isv = evs(ps[e], bs)
-    follow = rep and e == we
+  action enter(nu: Bool, bsOut: Bool) {
+    requires pc == Ready  requires configOk()  requires not provedReported()
+    pc = Loop
+    hu = ev(u0, nu, NonNil)  hs = evs(s0, bsOut, GoodVal)
+    follow = rep and nu == wnil and not bsOut
   }
 
-  action join(k: Edge, nu: Bool, bs: Bool) {
-    requires pc == Inner
-    pc = Returned
-    ru = ev(u[k], nu)  rs = evs(s[k], bs)
-    follow = follow and k == wk
+  action round(j: Arm, nu: Bool, bsOut: Bool) {
+    requires pc == Loop
+    hu = ev(bu[j], nu, hu)  hs = evs(bs[j], bsOut, hs)
+    uSrc = if bu[j] != UKeep then j else uSrc
+    sSrc = if bs[j] != SKeep then j else sSrc
+    uLater = if bu[j] != UKeep and bs[j] == SKeep then true
+             else if bs[j] != SKeep then false else uLater
+    lastArm = j
+    rounds = min(rounds + 1, 2)
+    follow = follow and rounds < len(wx, wy) and (if rounds == 0 then j == wx else j == wy)
+             and nu == wnil and not bsOut
   }
 
-  terminal { pc == Returned }
+  action leave() {
+    requires pc == Loop
+    pc = Join
+    follow = follow and rounds == len(wx, wy)
+  }
+
+  def uOn(k: Edge, nu: Bool) = if ju[k] == UFromH then hu else ev(ju[k], nu, NonNil)
+  def sOn(k: Edge, bsOut: Bool) = if js[k] == SFromH then hs else evs(js[k], bsOut, GoodVal)
+
+  action take(k: Edge, nu: Bool, bsOut: Bool) {
+    requires pc == Join  requires passes(jg[k], uOn(k, nu))
+    pc = Returned  taken = k
+    ru = mark(jg[k], uOn(k, nu))  rs = sOn(k, bsOut)
+    follow = follow and k == wk and nu == wnil and not bsOut
+  }
+
+  action abort() {
+    requires pc == Join
+    pc = Aborted  follow = false
+  }
+
+  terminal { pc == Returned or pc == Aborted or (pc == Ready and not configOk()) }
 
   // --- what is proved -------------------------------------------------------------
 
+  // Never blocked: the witness's edge passes its check, and it returns the pair.
   invariant ReportMeansNilWithBad {
-    (follow and pc == Returned) => (ru == NilConst and rs == BadConst)
+    (follow and pc == Join => passes(jg[wk], uOn(wk, wnil)))
+    and (follow and pc == Returned => (goodNil(ru) and rs == BadConst))
   }
   invariant NilWithBadIsReported {
-    (pc == Returned and ru == NilConst and rs == BadConst) => reported()
+    (pc == Returned and goodNil(ru) and rs == BadConst) => reported()
   }
 
   // The auxiliary invariants of the proved spec are left out: a failing
@@ -124,27 +190,37 @@ spec PairingNonRecursive {
   // --- witnesses ------------------------------------------------------------------
 
   // var u *T; var err error; if b { u = x } else { err = e }; return u, err
+  // (one round of the loop, then the edge that brings both from H).
   reachable EdgesKeptApart {
-    pc == Returned and not reported() and (exists k: Edge { u[k] == Nil })
-    and (exists k: Edge { s[k] == Bad })
-    and (forall k: Edge { u[k] != FromE and s[k] != SFromE })
+    pc == Returned and not reported() and u0 == Nil and s0 == Bad
+    and bu[0] == Alloc and bs[0] == SKeep and bu[1] == UKeep and bs[1] == Good
+    and ju[taken] == UFromH and js[taken] == SFromH and rounds == 1
   }
-  // The same shape nested inside another if: the pairing continues into E.
-  reachable NestedEdgesKeptApart {
-    pc == Returned and not reported() and bothFromE(0) and innerNil() and innerBad()
+  // A nil set in one round, a nil error in the next: reported.
+  reachable PairAcrossRounds {
+    pc == Returned and follow and len(wx, wy) == 2 and ju[wk] == UFromH and js[wk] == SFromH
+    and not pairs(wk, wx, 2) and not pairs(wk, wy, 2)
   }
-  reachable NestedPairReported {
-    pc == Returned and reported() and follow and bothFromE(wk)
+  // if u != nil { return u, s }: the check settles u before H is taken apart.
+  reachable CheckStopsThePair {
+    pc == Returned and not reported() and jg[taken] == NotNil and ju[taken] == UFromH
+    and js[taken] == SFromH and (exists x: Step { exists y: Step { path(x, y)
+      and finU(x, y) == Nil and finS(x, y) == Bad } })
   }
-  // One value from E, judged whole, the other a constant on the edge of J.
-  reachable HalfFromEReported {
-    pc == Returned and reported() and follow and u[wk] == FromE and s[wk] == Bad
+  // u := f(); if u == nil { return u, nil }: a value from before J, checked
+  // on the edge.
+  reachable CheckedOutsideWithBad {
+    pc == Returned and follow and jg[wk] == IsNil and ju[wk] == Ext and ru == NilChecked
   }
-  reachable PairOnOuterEdge {
-    pc == Returned and reported() and follow and u[wk] == Nil and s[wk] == Bad
+  reachable CheckedLoopValueWithBad {
+    pc == Returned and follow and jg[wk] == IsNil and ju[wk] == UFromH and ru == NilChecked
   }
-  // return nil, err: an error from outside is not a nil value.
+  // return nil, err with err from outside: not reported. The gap.
   reachable OutsideErrorNotReported {
     pc == Returned and not reported() and ru == NilConst and rs == BadExt
+  }
+  // return u, nil with u from outside, unchecked: not reported. The gap.
+  reachable OutsideNilNotReported {
+    pc == Returned and not reported() and ru == NilExt and rs == BadConst
   }
 }

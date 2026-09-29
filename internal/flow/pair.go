@@ -21,9 +21,18 @@ func Pair(pt, gt *Tracer, p, g ssa.Value, at Site) bool {
 
 func pair(pt, gt *Tracer, p ssa.Value, ps []Site, g ssa.Value, gs []Site, seen map[[2]ssa.Value]bool) bool {
 	// A check on the way settles a value for the whole path, before its φ
-	// is taken apart and the check is left behind.
-	if pt.checkedNonNil(p, ps...) || gt.checkedNonNil(g, gs...) {
+	// is taken apart and the check is left behind. A value checked to be
+	// nil stands for the constant from here on.
+	pNil, pNonNil := pt.checked(p, ps...)
+	gNil, gNonNil := gt.checked(g, gs...)
+	if pNonNil || gNonNil {
 		return false
+	}
+	if pNil {
+		p = ssa.NewConst(nil, p.Type())
+	}
+	if gNil {
+		g = ssa.NewConst(nil, g.Type())
 	}
 	var blk *ssa.BasicBlock
 	if phi, ok := g.(*ssa.Phi); ok {
@@ -51,7 +60,7 @@ func pair(pt, gt *Tracer, p ssa.Value, ps []Site, g ssa.Value, gs []Site, seen m
 	}
 	if pa, pl := pairFollowedLoad(pt, p); pa != nil {
 		if ga, gl := pairFollowedLoad(gt, g); ga != nil {
-			return pairStores(pt, gt, pa, pl, ga, gl)
+			return pairStores(pt, gt, pa, pl, ga, gl, seen)
 		}
 	}
 	return pt.Is(p, ps...) && gt.Is(g, gs...)
@@ -117,9 +126,9 @@ func pairFollowedLoad(t *Tracer, v ssa.Value) (*ssa.Alloc, *ssa.UnOp) {
 }
 
 // pairStores walks back from the loads along each path, to the last store
-// into each variable on that path, and judges the two stored values
-// together.
-func pairStores(pt, gt *Tracer, pa *ssa.Alloc, pl *ssa.UnOp, ga *ssa.Alloc, gl *ssa.UnOp) bool {
+// into each variable on that path, and pairs the two stored values, which
+// may be φs themselves.
+func pairStores(pt, gt *Tracer, pa *ssa.Alloc, pl *ssa.UnOp, ga *ssa.Alloc, gl *ssa.UnOp, pairSeen map[[2]ssa.Value]bool) bool {
 	type state struct {
 		b      *ssa.BasicBlock
 		pd, gd *storeDef
@@ -146,7 +155,7 @@ func pairStores(pt, gt *Tracer, pa *ssa.Alloc, pl *ssa.UnOp, ga *ssa.Alloc, gl *
 			}
 		}
 		if pd != nil && gd != nil {
-			return pt.Is(pd.value, SiteAt(pd.block)) && gt.Is(gd.value, SiteAt(gd.block))
+			return pair(pt, gt, pd.value, []Site{SiteAt(pd.block)}, gd.value, []Site{SiteAt(gd.block)}, pairSeen)
 		}
 		for _, p := range b.Preds {
 			s := state{p, pd, gd}

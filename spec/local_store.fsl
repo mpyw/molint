@@ -47,10 +47,14 @@
 //
 // The claim:
 //
+//   WitnessNeverBlocked       each round and the exit the witness takes are
+//                             enabled
 //   ReportMeansANilIsLoaded   when reported, the witness run loads the nil
 //                             constant
-//   ConstantNilIsReported     whenever a run loads the nil constant, and x
-//                             is followed, it is reported
+//   ConstantNilIsReported     whenever a run loads the nil constant, and no
+//                             code that holds the address can store into x,
+//                             it is reported. A literal that only loads x is
+//                             such a run, so it must keep x followed
 //
 // The witness takes the first arm that stores nil, once. With none, it keeps
 // the entry's store: zero rounds of the loop, or an arm that keeps x.
@@ -60,9 +64,16 @@
 // ASSUME-2 (representation only): one variable, three arms, one escape
 //   point. A second variable adds nothing a store does not already model.
 // ASSUME-3: a nil check on a load is not modeled. It is an accepted gap of
-//   the rule: stores are followed, checks on loaded values are not. So
-//   `if p == nil { p = def }; return` in a function with a defer is reported
-//   through the Alloc's zero, although the check replaced it.
+//   the rule (design/rules.md, Gaps): a load follows the stores that reach
+//   it, and a check on an earlier load of the same variable is not carried
+//   over, for any later load, and for a comparison with the zero Result as
+//   well. So `if p == nil { p = def }; return` on a named result in a
+//   function with a defer, or on a captured p, is reported through the
+//   Alloc's zero, although the check replaced it.
+// ASSUME-4: a return with operands is not a load here: it is judged on the
+//   values it stores. The consequence the rules accept, that a deferred
+//   store may replace a nil the return stored, is documented by
+//   return_store_deferred.fsl.
 spec LocalStore {
   enum Store { Keep, Nil, Alloc, Ext }
   enum Escape { NoEscape, LoadsOnly, StoresInto, AddrPassed }
@@ -166,9 +177,15 @@ spec LocalStore {
 
   // --- what is proved -------------------------------------------------------------
 
+  invariant WitnessNeverBlocked {
+    (follow and pc == Loop) => (
+      (rounds < wRounds => (looped or rounds == 0))
+      and (rounds == wRounds => (looped or rounds == 1))
+    )
+  }
   invariant ReportMeansANilIsLoaded { (follow and pc == Loaded) => rv == NilConst }
   invariant ConstantNilIsReported {
-    (pc == Loaded and rv == NilConst and followed()) => reported()
+    (pc == Loaded and rv == NilConst and not escapes()) => reported()
   }
 
   // --- auxiliary ------------------------------------------------------------------
@@ -195,7 +212,7 @@ spec LocalStore {
     )
   }
   invariant LoadedTraced {
-    (pc == Loaded and rv == NilConst and followed()) => (s3 == Nil or (s3 == Keep and joinNil()))
+    (pc == Loaded and rv == NilConst and not escapes()) => (s3 == Nil or (s3 == Keep and joinNil()))
   }
 
   // --- witnesses ------------------------------------------------------------------

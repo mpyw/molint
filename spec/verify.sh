@@ -18,26 +18,45 @@ set -o pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
 if ! command -v fslc > /dev/null 2>&1; then
+  # Locally a missing fslc skips the specs. In CI it fails the run: a green
+  # job that verified nothing would pass for a verified one.
+  if [[ -n "${CI:-}" ]]; then
+    echo "fslc not found, and CI is set: the specs cannot be skipped" >&2
+    exit 1
+  fi
   echo "fslc not found; skipping the specs. Install: https://github.com/ymm-oss/fsl" >&2
   exit 0
 fi
+if ! command -v python3 > /dev/null 2>&1; then
+  echo "python3 not found; it reads fslc's JSON" >&2
+  exit 1
+fi
 
-## Reads one top-level string field out of fslc's JSON, without needing jq.
+## Reads one top-level field of fslc's JSON. A missing field, or output that
+## is not JSON, reads as "none".
 field() {
-  sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([A-Za-z_]*\)\".*/\1/p" <<< "$1" | head -n 1
+  python3 -c '
+import json, sys
+try:
+    v = json.loads(sys.stdin.read()).get(sys.argv[1])
+except Exception:
+    v = None
+print(v if isinstance(v, str) else "none")
+' "$2" <<< "$1"
 }
 
 ## These must verify, and must be inductive rather than true only to a depth.
-proving=(nil_value pairing pairing_stores local_store result_zero)
+proving=(nil_value pairing pairing_stores pairing_load local_store result_zero)
 
 ## These must NOT verify. Each is a rule that was rejected, and its
 ## counterexample is the reason. Pinned to the invariant it must break.
 naive_specs=(
   nil_value_nocheck        ReportMeansANilIsReturned
-  nil_value_nophi          ConstantNilIsReported
+  nil_value_nophi          CheckedOrConstantNilIsReported
   pairing_naive            ReportMeansNilWithBad
   pairing_nonrecursive     ReportMeansNilWithBad
   pairing_bare_return      ReportMeansNilWithBad
+  pairing_load_whole       ReportMeansNilWithBad
   local_store_last         ConstantNilIsReported
   local_store_escape       ReportMeansANilIsLoaded
   result_zero_nocheck      ReportMeansAZeroIsUsed
@@ -69,8 +88,8 @@ done
 
 for f in "${proving[@]}"; do
   # The depth bounds the search for each reachable's witness. The longest,
-  # nil_value's two rounds of the loop, takes six steps.
-  out=$(fslc verify "$f.fsl" --engine induction --depth 8 2>&1)
+  # nil_value's three rounds of the loop, takes six steps.
+  out=$(fslc verify "$f.fsl" --engine induction --depth 8 2> /dev/null)
   if [[ "$(field "$out" result)" == "proved" ]]; then
     echo "  ok       $f.fsl (proved)"
   else
@@ -81,7 +100,7 @@ done
 ## Checks that a spec fails on its pinned invariant. $3 is naive or gap.
 check_failing() {
   local f=$1 want=$2 kind=$3 out
-  out=$(fslc verify "$f.fsl" --depth 8 2>&1)
+  out=$(fslc verify "$f.fsl" --depth 8 2> /dev/null)
   case "$(field "$out" result)" in
     violated)
       if [[ "$(field "$out" invariant)" == "$want" ]]; then

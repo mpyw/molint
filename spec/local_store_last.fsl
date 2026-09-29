@@ -122,9 +122,15 @@ spec LocalStoreLast {
 
   // --- what is proved -------------------------------------------------------------
 
+  invariant WitnessNeverBlocked {
+    (follow and pc == Loop) => (
+      (rounds < wRounds => (looped or rounds == 0))
+      and (rounds == wRounds => (looped or rounds == 1))
+    )
+  }
   invariant ReportMeansANilIsLoaded { (follow and pc == Loaded) => rv == NilConst }
   invariant ConstantNilIsReported {
-    (pc == Loaded and rv == NilConst and followed()) => reported()
+    (pc == Loaded and rv == NilConst and not escapes()) => reported()
   }
 
   // The auxiliary invariants of the proved spec are left out: a failing
@@ -136,11 +142,14 @@ spec LocalStoreLast {
   reachable LoadOnlyCaptureIsFollowed {
     pc == Loaded and reported() and esc == LoadsOnly and s3 == Keep and rv == NilConst
   }
-  // defer func() { p = def }(); return nil: the load gives the deferred store.
+  // p = nil; defer func() { p = def }(); return: the load gives the deferred store.
   reachable DeferredStoreIsNotFollowed {
     pc == Loaded and not reported() and esc == StoresInto and deferred and s3 == Nil
     and eff == SetsNonNil and rv == NonNil
   }
+  // The witness runs to the load, through an arm and through the loop.
+  reachable WitnessThroughAnArm { follow and pc == Loaded and rounds == 1 and arm[wArm] == Nil }
+  reachable WitnessSkipsTheLoop { follow and pc == Loaded and rounds == 0 and looped }
   // Not followed, so a nil that is loaded goes unreported: the gap.
   reachable EscapedNilIsMissed { pc == Loaded and not reported() and escapes() and rv == NilConst }
   // Every arm stores &T{}: the entry's nil does not reach, without a loop.

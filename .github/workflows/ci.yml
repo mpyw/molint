@@ -80,9 +80,20 @@ jobs:
 
       # The formal specs are documentation that cannot drift only if something
       # re-runs them. fslc is the FSL verifier: https://github.com/ymm-oss/fsl
+      # The version is pinned: spec/README.md measures its numbers on it, and
+      # a new release may change a verdict. Raise it on purpose.
       - name: Install fslc
+        env:
+          FSLC_VERSION: v4.0.0
         run: |
-          curl -fsSL https://raw.githubusercontent.com/ymm-oss/fsl/main/install.sh | bash -s -- --no-skill
+          base="https://github.com/ymm-oss/fsl/releases/download/$FSLC_VERSION"
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "$base/fslc-linux-x64" -o fslc
+          curl -fsSL "$base/fslc-linux-x64.sha256" -o fslc.sha256
+          [ "$(awk '{print $1}' fslc.sha256)" = "$(sha256sum fslc | awk '{print $1}')" ]
+          install -m 0755 fslc "$HOME/.local/bin/fslc"
+          rm -f fslc fslc.sha256
+          [ "$("$HOME/.local/bin/fslc" --version)" = "fslc ${FSLC_VERSION#v}" ]
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       # verify.sh holds the specs that must be proved and the ones that must

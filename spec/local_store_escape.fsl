@@ -19,7 +19,8 @@
 // reported on purpose. return_store_deferred.fsl documents that.
 //
 // The program, the run and the claim are those of local_store.fsl, except
-// for followed().
+// for followed(). The run is limited to programs that local_store.fsl's rule
+// does not report, so every report here is this rule's own.
 spec LocalStoreEscape {
   enum Store { Keep, Nil, Alloc, Ext }
   enum Escape { NoEscape, LoadsOnly, StoresInto, AddrPassed }
@@ -63,6 +64,8 @@ spec LocalStoreEscape {
 
   // THE NAIVE RULE: every variable is followed, whatever holds its address.
   def followed() = true
+  // The rule of local_store.fsl, to pick the programs it does not report.
+  def provedReported() = (esc == NoEscape or esc == LoadsOnly) and loadNil()
   def entryNil() = s0 == Keep or s0 == Nil
   def someArmNil() = exists k: Arm { arm[k] == Nil }
   def someArmKeeps() = exists k: Arm { arm[k] == Keep }
@@ -77,7 +80,7 @@ spec LocalStoreEscape {
   def witnessRounds() = if s3 == Keep and not someArmNil() and looped then 0 else 1
 
   action judge() {
-    requires pc == Ready
+    requires pc == Ready  requires not provedReported()
     pc = Judged
     rep = reported()  wArm = witnessArm()  wRounds = witnessRounds()
   }
@@ -124,9 +127,15 @@ spec LocalStoreEscape {
 
   // --- what is proved -------------------------------------------------------------
 
+  invariant WitnessNeverBlocked {
+    (follow and pc == Loop) => (
+      (rounds < wRounds => (looped or rounds == 0))
+      and (rounds == wRounds => (looped or rounds == 1))
+    )
+  }
   invariant ReportMeansANilIsLoaded { (follow and pc == Loaded) => rv == NilConst }
   invariant ConstantNilIsReported {
-    (pc == Loaded and rv == NilConst and followed()) => reported()
+    (pc == Loaded and rv == NilConst and not escapes()) => reported()
   }
 
   // The auxiliary invariants of the proved spec are left out: a failing
@@ -138,11 +147,14 @@ spec LocalStoreEscape {
   reachable LoadOnlyCaptureIsFollowed {
     pc == Loaded and reported() and esc == LoadsOnly and s3 == Keep and rv == NilConst
   }
-  // defer func() { p = def }(); return nil: the load gives the deferred store.
+  // p = nil; defer func() { p = def }(); return: the load gives the deferred store.
   reachable DeferredStoreIsNotFollowed {
     pc == Loaded and not reported() and esc == StoresInto and deferred and s3 == Nil
     and eff == SetsNonNil and rv == NonNil
   }
+  // The witness runs to the load, through an arm and through the loop.
+  reachable WitnessThroughAnArm { follow and pc == Loaded and rounds == 1 and arm[wArm] == Nil }
+  reachable WitnessSkipsTheLoop { follow and pc == Loaded and rounds == 0 and looped }
   // Not followed, so a nil that is loaded goes unreported: the gap.
   reachable EscapedNilIsMissed { pc == Loaded and not reported() and escapes() and rv == NilConst }
   // Every arm stores &T{}: the entry's nil does not reach, without a loop.

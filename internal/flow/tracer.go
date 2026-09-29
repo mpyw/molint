@@ -49,20 +49,23 @@ func TrueTracer() *Tracer {
 	}}
 }
 
-// checkedNonNil reports whether a nil check at one of sites says v is not
-// nil. It is false when the tracer does not count checks.
+// checked reports whether a nil check at one of sites says v is nil, or not
+// nil. Both are false when the tracer does not count checks.
 //
 //declscope:package // pair.go settles a value before taking its φ apart
-func (t *Tracer) checkedNonNil(v ssa.Value, sites ...Site) bool {
+func (t *Tracer) checked(v ssa.Value, sites ...Site) (isNil, nonNil bool) {
 	if !t.checks {
-		return false
+		return false, false
 	}
 	for _, s := range sites {
-		if s.state(v) == nilcheck.NonNil {
-			return true
+		switch s.state(v) {
+		case nilcheck.Nil:
+			isNil = true
+		case nilcheck.NonNil:
+			nonNil = true
 		}
 	}
-	return false
+	return isNil, nonNil
 }
 
 // Is reports whether v may be a bad constant on some path to one of sites.

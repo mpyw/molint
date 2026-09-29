@@ -486,3 +486,57 @@ func (c *C) GetMissing(k string) (v *T, err error) {
 	}
 	return v, e // want `^\(\*C\)\.GetMissing returns a nil \*T with a nil error; return an error, or mo\.Option\[\*T\] \[return-nil\]$`
 }
+
+// Not reported: the values stored before a bare return are φs, and they
+// pair up along each edge.
+func PairStoredPhis(b bool) (u *T, err error) {
+	defer cleanup()
+	var x *T
+	var e error
+	if b {
+		x, e = nil, errX
+	} else {
+		x, e = get(), nil
+	}
+	u, err = x, e
+	return
+}
+
+// The same, with an edge that brings neither.
+func PairStoredPhisMissing(b, c bool) (u *T, err error) {
+	defer cleanup()
+	var x *T
+	var e error
+	if b {
+		x, e = nil, errX
+	} else if c {
+		x, e = get(), nil
+	}
+	u, err = x, e
+	return // want `^PairStoredPhisMissing returns a nil \*T with a nil error; return an error, or mo\.Option\[\*T\] \[return-nil\]$`
+}
+
+func get2() *T { return &T{} }
+
+// A φ checked to be nil at the return is nil there, whatever its edges
+// bring.
+func PairCheckedNilPhi(c bool) (*T, error) {
+	x := get()
+	if c {
+		x = get2()
+	}
+	if x == nil {
+		return x, nil // want `^PairCheckedNilPhi returns a nil \*T with a nil error; return an error, or mo\.Option\[\*T\] \[return-nil\]$`
+	}
+	return x, nil
+}
+
+// Not reported: the pointer is made in the block of the error's φ, after
+// the join, so it is the same along every edge.
+func PairMadeAfterJoin(c bool) (*T, error) {
+	var err error
+	if c {
+		err = errX
+	}
+	return get(), err
+}

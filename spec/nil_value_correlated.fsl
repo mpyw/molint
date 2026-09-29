@@ -6,48 +6,60 @@
 // two branches test the same condition, the nil edge and the return may never
 // run together:
 //
-//   var p *T
-//   if c { p = X }       p is φ(nil, X), a nil value
-//   if c { return p }    reported: "F returns a nil *T"
+//   p := P0
+//   if c { p = P1 }       p is φ(P0, P1)
+//   if c { return p }     reported when P0 or P1 is nil
 //   return &T{}
 //
-// With X = &T{}, no run returns nil. The second test may also be an
-// independent condition d, and then a run does return nil.
+// With P0 = nil and P1 = &T{}, no run returns nil. With the second test an
+// independent condition d, a run does.
 //
-// The witness run is the one the rule stands for: the nil edge of the φ-node,
-// then the return. With the same condition, the second branch cannot take the
-// return after the nil edge, so ReportMeansANilIsReturned breaks.
+// The verdict is computed from the program by the rule of nil_value.fsl. The
+// witness run is the one it stands for: the nil edge of the φ-node, then the
+// return. With the same condition, the second branch cannot take the return
+// after the first edge, so ReportMeansANilIsReturned breaks.
 //
 // design/rules.md defines a nil value as nil on some path, with branches
-// taken as independent. nil_value.fsl proves that meaning under its
-// ASSUME-1, which this spec drops.
+// taken as independent. nil_value.fsl proves that meaning under its ASSUME-1,
+// which this file drops.
 spec NilValueCorrelated {
-  enum Op { Alloc, Ext }
+  enum Op { Nil, Alloc, Ext }
   enum Val { NilConst, NilExt, NonNil }
   enum Pc { Ready, Joined, Returned }
+  type Bit = 0..4
 
   state {
     pc: Pc,
-    // the program, left to init's free choice
-    xAlloc: Bool, same: Bool,
+    ch: Map<Bit, Bool>,
+    // the program
+    p0: Op, p1: Op, same: Bool,
+    // the verdict: which edge brings the nil
+    rep: Bool, wc: Bool,
     // the run
     c: Bool, p: Val, returnedP: Bool, rv: Val, follow: Bool
   }
 
+  def pick(i: Bit) = if ch[i] then Nil else if ch[i + 1] then Alloc else Ext
+
   init {
     pc = Ready
+    p0 = pick(0)  p1 = pick(2)  same = ch[4]
+    rep = reported()  wc = p0 != Nil
     c = false  p = NonNil  returnedP = false  rv = NonNil  follow = false
   }
 
-  // The rule: p is φ(nil, X), whose first edge brings the constant.
-  def reported() = true
+  // The rule of nil_value.fsl: a φ-node is a nil value when an edge brings
+  // the constant. The witness takes the first such edge: c false for P0.
+  def reported() = p0 == Nil or p1 == Nil
 
-  // if c { p = X }. The witness takes the nil edge: c is false.
+  def ev(o: Op, nilOut: Bool) =
+    if o == Nil then NilConst else if o == Alloc then NonNil else if nilOut then NilExt else NonNil
+
   action branch(cond: Bool, nilOut: Bool) {
     requires pc == Ready
     pc = Joined  c = cond
-    p = if not cond then NilConst else if xAlloc then NonNil else (if nilOut then NilExt else NonNil)
-    follow = reported() and not cond
+    p = if cond then ev(p1, nilOut) else ev(p0, nilOut)
+    follow = rep and cond == wc and not nilOut
   }
 
   // if c { return p } (same), or if d { return p } (independent).
@@ -68,4 +80,5 @@ spec NilValueCorrelated {
   }
 
   reachable IndependentReturnsNil { pc == Returned and not same and returnedP and rv == NilConst }
+  reachable SameReturnsNilThroughP1 { pc == Returned and same and follow and p1 == Nil and p0 != Nil }
 }
