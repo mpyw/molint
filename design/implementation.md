@@ -1,18 +1,18 @@
 # Implementation notes
 
-This file records design decisions and implementation details. The short, always-loaded instructions are in [AGENTS.md](../AGENTS.md). Open questions are in [#1](https://github.com/mpyw/nilproof/issues/1).
+This file records design decisions and implementation details. The short, always-loaded instructions are in [AGENTS.md](../AGENTS.md). Open questions are in [#1](https://github.com/mpyw/molint/issues/1).
 
 ## Project overview
 
-**nilproof** is a Go linter that reports a returned pointer it cannot prove non-nil. It is built on [`go/analysis`](https://pkg.go.dev/golang.org/x/tools/go/analysis) and [`buildssa`](https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/buildssa).
+**molint** is a Go linter that reports a returned pointer it cannot prove non-nil. It is built on [`go/analysis`](https://pkg.go.dev/golang.org/x/tools/go/analysis) and [`buildssa`](https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/buildssa).
 
-**Unproven is reported.** errlogreturn leans toward silence. nilproof leans the other way, because it is adopted on purpose by a new application that wants the guarantee. Where the proof cannot follow a value, the report says so, and the author returns `mo.Option`, checks the value, or writes an ignore with a reason.
+**Unproven is reported.** errlogreturn leans toward silence. molint leans the other way, because it is adopted on purpose by a new application that wants the guarantee. Where the proof cannot follow a value, the report says so, and the author returns `mo.Option`, checks the value, or writes an ignore with a reason.
 
 ## Architecture
 
 ```text
 analyzer.go            Analyzer, ErrNoSSA
-cmd/nilproof/          singlechecker entry point
+cmd/molint/          singlechecker entry point
 internal/              the engine: one flat package, one namespace per file
   run.go               Run: summarize to a fixpoint, export facts, report
   checker.go           the per-pass state, with each stage's book embedded
@@ -24,7 +24,7 @@ internal/              the engine: one flat package, one namespace per file
   fact.go              Fact and GlobalFact
 internal/nilcheck/     what the nil checks above a block say about a value
 internal/typeutil/     pointer and error results, and names as diagnostics spell them
-internal/directive/    //nilproof: comments
+internal/directive/    //molint: comments
 ```
 
 The engine is flat because its parts are mutually recursive. A summary is the judgement of a function. The judgement proves values. A proof of a call reads the callee's summary, and a proof of a variable reads the variable's summary, whose stores are proven in turn. Splitting that cycle across packages would only add exports.
@@ -108,7 +108,7 @@ A φ that reaches itself round a loop is taken as proven on the back edge. A φ'
 | Trusting the `(*T, error)` convention for every callee | A dependency that really returns `nil, nil` would pass. Bodies are read wherever they exist. Only calls without a body are trusted |
 | Granting a fact to a function whose report is ignored | The ignore records that the author accepts nil there. Callers must not rely on it |
 | Suggested fixes | Most fixes change a signature and break callers in other packages. See #1 |
-| Running nilproof on itself | nilproof is a tool, not the kind of application the rule is for. Its engine returns a nil `*proofFailure` to mean "proven" |
+| Running molint on itself | molint is a tool, not the kind of application the rule is for. Its engine returns a nil `*proofFailure` to mean "proven" |
 | Unexporting `nilcheck.Unknown`, as `declscope shrink` proposed | An exported enum with an unexported zero value cannot be spelled by its users |
 
 ## Known limitations

@@ -26,15 +26,15 @@ func TestScan(t *testing.T) {
 	const src = `package p
 
 func f() {
-	//nilproof:ignore
+	//molint:ignore
 	_ = 0
-	//nilproof:ignore //
+	//molint:ignore //
 	_ = 1
-	//nilproof:ignore // reason
+	//molint:ignore // reason
 	_ = 2
-	//nilproof:ignore//reason
+	//molint:ignore//reason
 	_ = 3
-	_ = 4 //nilproof:ignore // same line
+	_ = 4 //molint:ignore // same line
 }
 `
 	fset := token.NewFileSet()
@@ -43,7 +43,7 @@ func f() {
 
 	var lines []int
 	for _, p := range s.Problems() {
-		if p.Message != "nilproof:ignore needs a reason after //" {
+		if p.Message != "molint:ignore needs a reason after //" {
 			t.Errorf("problem %q", p.Message)
 		}
 		lines = append(lines, fset.Position(p.Pos).Line)
@@ -66,8 +66,8 @@ func TestScanGenerated(t *testing.T) {
 
 package p
 
-//nilproof:ignore
-//nilproof:unknown
+//molint:ignore
+//molint:unknown
 var _ = 0
 `
 	fset := token.NewFileSet()

@@ -1,4 +1,4 @@
-// Package internal implements the nilproof analysis.
+// Package internal implements the molint analysis.
 //
 // The analysis does not look for nil. It asks each return of a pointer for a
 // proof that the pointer is not nil, and reports the returns that have none.
@@ -21,7 +21,7 @@ import (
 
 // ErrRunWithoutSSA is returned by Run when the pass carries no buildssa
 // result, which means the analyzer was registered without its requirement.
-var ErrRunWithoutSSA = errors.New("nilproof: buildssa result missing")
+var ErrRunWithoutSSA = errors.New("molint: buildssa result missing")
 
 // Run analyzes one package.
 func Run(pass *analysis.Pass) (any, error) {
@@ -43,7 +43,7 @@ func Run(pass *analysis.Pass) (any, error) {
 	// test variant as in the ordinary one, so an ignore that silenced
 	// nothing here silences nothing anywhere.
 	for _, pos := range c.directives.Unused() {
-		pass.Reportf(pos, "unused nilproof:ignore directive")
+		pass.Reportf(pos, "unused molint:ignore directive")
 	}
 	return nil, nil
 }

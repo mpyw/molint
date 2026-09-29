@@ -3,8 +3,8 @@ package internal
 import (
 	"golang.org/x/tools/go/ssa"
 
-	"github.com/mpyw/nilproof/internal/nilcheck"
-	"github.com/mpyw/nilproof/internal/typeutil"
+	"github.com/mpyw/molint/internal/nilcheck"
+	"github.com/mpyw/molint/internal/typeutil"
 )
 
 // judgement is what judging one function found.

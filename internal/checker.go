@@ -5,7 +5,7 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
-	"github.com/mpyw/nilproof/internal/directive"
+	"github.com/mpyw/molint/internal/directive"
 )
 
 // checker is one pass's state. Each stage keeps its own state in a struct
@@ -16,7 +16,7 @@ import (
 //declscope:package
 type checker struct {
 	pass *analysis.Pass
-	// directives is what the package's //nilproof: comments say.
+	// directives is what the package's //molint: comments say.
 	directives *directive.Set
 	// generated holds the files marked as generated, by name. Nothing is
 	// reported in them, but their functions are summarized like any other.

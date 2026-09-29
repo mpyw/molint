@@ -6,8 +6,8 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
-	"github.com/mpyw/nilproof/internal/nilcheck"
-	"github.com/mpyw/nilproof/internal/typeutil"
+	"github.com/mpyw/molint/internal/nilcheck"
+	"github.com/mpyw/molint/internal/typeutil"
 )
 
 // proofSite is where a value is proven: the start of a block, or the edge
@@ -108,7 +108,7 @@ func (f *proofFailure) origin(pkg *types.Package) string {
 	case *ssa.Convert, *ssa.SliceToArrayPointer:
 		return "a conversion"
 	}
-	return "a value nilproof does not follow"
+	return "a value molint does not follow"
 }
 
 // callOrigin describes a call whose result is not proven.

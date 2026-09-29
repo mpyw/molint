@@ -8,7 +8,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/ssa"
 
-	"github.com/mpyw/nilproof/internal/typeutil"
+	"github.com/mpyw/molint/internal/typeutil"
 )
 
 // reportFunc reports each return of fn that does not prove a pointer result.

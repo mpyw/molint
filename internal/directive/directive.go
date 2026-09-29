@@ -1,6 +1,6 @@
-// Package directive reads the //nilproof: comments in a package.
+// Package directive reads the //molint: comments in a package.
 //
-// One directive exists. //nilproof:ignore // <reason> silences a report on its
+// One directive exists. //molint:ignore // <reason> silences a report on its
 // own line or the line below it. The reason is required, so that the next
 // reader can tell a decision from a shortcut. Any other directive is
 // reported.
@@ -12,10 +12,10 @@ import (
 	"strings"
 )
 
-// tool is the tool name of every directive, as in //nilproof:ignore.
+// tool is the tool name of every directive, as in //molint:ignore.
 // Directives follow the syntax of https://go.dev/doc/comment#directives, and
 // go/ast parses them. A comment with a space after the slashes is prose.
-const tool = "nilproof"
+const tool = "molint"
 
 // Set is what the directives in a package say.
 type Set struct {
@@ -60,13 +60,13 @@ func (s *Set) scanFile(f *ast.File) {
 			case !ok:
 			case name != "ignore":
 				s.problems = append(s.problems, Problem{Pos: cm.Pos(),
-					Message: "unknown directive nilproof:" + name})
+					Message: "unknown directive molint:" + name})
 			case args != "":
 				s.problems = append(s.problems, Problem{Pos: cm.Pos(),
-					Message: "nilproof:ignore takes no argument; write the reason after //"})
+					Message: "molint:ignore takes no argument; write the reason after //"})
 			case !reason:
 				s.problems = append(s.problems, Problem{Pos: cm.Pos(),
-					Message: "nilproof:ignore needs a reason after //"})
+					Message: "molint:ignore needs a reason after //"})
 			default:
 				lines[s.fset.PositionFor(cm.Pos(), false).Line] = &ignore{pos: cm.Pos()}
 			}
@@ -76,7 +76,7 @@ func (s *Set) scanFile(f *ast.File) {
 
 // parse returns the directive's name and arguments, and whether a reason
 // follows them, when cm is one of this tool's. The reason is a trailing
-// comment, so //nilproof:ignore // why and //nilproof:ignore//why are both an
+// comment, so //molint:ignore // why and //molint:ignore//why are both an
 // ignore with a reason. Text after the name that is not behind // is an
 // argument, which the ignore does not take, so that every tool of this family
 // reads a directive the same way.

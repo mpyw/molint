@@ -6,7 +6,7 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
-	"github.com/mpyw/nilproof/internal/typeutil"
+	"github.com/mpyw/molint/internal/typeutil"
 )
 
 // globalBook is what the pass has proven about the package's pointer

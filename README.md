@@ -1,4 +1,4 @@
-# nilproof
+# molint
 
 Go linter that forbids returning a pointer it cannot prove to be non-nil.
 
@@ -7,7 +7,7 @@ Go linter that forbids returning a pointer it cannot prove to be non-nil.
 
 ## Overview
 
-A nil pointer returned where a value was expected fails far from where it was made. nilproof does not look for nil. It asks every return of a pointer for a proof that the pointer is not nil. A return without one is reported.
+A nil pointer returned where a value was expected fails far from where it was made. molint does not look for nil. It asks every return of a pointer for a proof that the pointer is not nil. A return without one is reported.
 
 Where a value may be absent, put the absence in the type. Return `mo.Option[*T]` from [samber/mo](https://github.com/samber/mo) instead of a nil pointer.
 
@@ -26,7 +26,7 @@ func Find(name string) (*User, error) {
 ```
 
 ```console
-$ nilproof ./...
+$ molint ./...
 user.go:16:2: Lookup may return a nil *User, from a map lookup; return mo.Option[*User] where absence is expected
 user.go:22:3: Find may return a nil *User with a nil error, from a nil constant; return an error, or mo.Option[*User], where absence is expected
 user.go:24:2: Find may return a nil *User with a nil error, from a map lookup; return an error, or mo.Option[*User], where absence is expected
@@ -38,18 +38,18 @@ Each report names the value where the proof stopped. That is where the nil may c
 
 | Method | Command | Needs |
 | --- | --- | --- |
-| `go tool` | `go get -tool github.com/mpyw/nilproof/cmd/nilproof@latest` | Go 1.27+ |
-| `go install` | `go install github.com/mpyw/nilproof/cmd/nilproof@latest` | Go 1.27+ |
+| `go tool` | `go get -tool github.com/mpyw/molint/cmd/molint@latest` | Go 1.27+ |
+| `go install` | `go install github.com/mpyw/molint/cmd/molint@latest` | Go 1.27+ |
 
 ```bash
-nilproof ./...          # or: go tool nilproof ./...
+molint ./...          # or: go tool molint ./...
 ```
 
 > [!TIP]
 > On a large module, run it through `go vet`. Every dependency is analyzed too, so that a constructor in another package is proven where it is called. Run on its own, the tool holds all of that in one process. On one application, it peaked at 4.6GB alone and at 0.7GB through `go vet`.
 >
 > ```bash
-> go vet -vettool=$(which nilproof) ./...
+> go vet -vettool=$(which molint) ./...
 > ```
 
 ## What counts as proof
@@ -114,20 +114,20 @@ return u, nil // proven: Find is proven, and err is checked
 
 ## Ignoring a report
 
-Write `//nilproof:ignore` on the reported line or the line above it. A reason after `//` is required.
+Write `//molint:ignore` on the reported line or the line above it. A reason after `//` is required.
 
 ```go
 func proxy(*http.Request) (*url.URL, error) {
-	//nilproof:ignore // net/http reads nil, nil as "no proxy"
+	//molint:ignore // net/http reads nil, nil as "no proxy"
 	return nil, nil
 }
 ```
 
 | Directive | Result |
 | --- | --- |
-| `//nilproof:ignore // reason` | Silences the report |
-| `//nilproof:ignore` | Reported: the reason is missing |
-| `//nilproof:ignore reason` | Reported: text outside `//` is an argument, and it takes none |
+| `//molint:ignore // reason` | Silences the report |
+| `//molint:ignore` | Reported: the reason is missing |
+| `//molint:ignore reason` | Reported: text outside `//` is an argument, and it takes none |
 | An ignore that silences nothing | Reported as unused |
 
 > [!NOTE]
@@ -135,7 +135,7 @@ func proxy(*http.Request) (*url.URL, error) {
 
 ## Fixing a report
 
-nilproof offers no automatic fix. Most fixes change a signature, which breaks callers in other packages.
+molint offers no automatic fix. Most fixes change a signature, which breaks callers in other packages.
 
 | The nil means | Return instead |
 | --- | --- |

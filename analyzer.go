@@ -1,23 +1,23 @@
-// Package nilproof reports a returned pointer that is not proven non-nil.
+// Package molint reports a returned pointer that is not proven non-nil.
 //
 // A nil pointer returned where a value was expected fails far from where it
-// was made. nilproof asks every return of a pointer for a proof that it is
+// was made. molint asks every return of a pointer for a proof that it is
 // not nil. Where a value may be absent, return mo.Option from
 // github.com/samber/mo instead, so that the absence is in the type.
-package nilproof
+package molint
 
 import (
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/buildssa"
 
-	"github.com/mpyw/nilproof/internal"
+	"github.com/mpyw/molint/internal"
 )
 
 // Analyzer reports a returned pointer that is not proven non-nil.
 var Analyzer = &analysis.Analyzer{
-	Name:      "nilproof",
+	Name:      "molint",
 	Doc:       "reports a returned pointer that is not proven non-nil",
-	URL:       "https://github.com/mpyw/nilproof",
+	URL:       "https://github.com/mpyw/molint",
 	Requires:  []*analysis.Analyzer{buildssa.Analyzer},
 	FactTypes: []analysis.Fact{new(internal.Fact), new(internal.GlobalFact)},
 	Run:       internal.Run,

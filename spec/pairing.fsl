@@ -1,0 +1,208 @@
+// When return-nil reports a nil pointer that comes with a trailing error or
+// bool. See "return-nil" in design/rules.md.
+//
+// A nil pointer with a trailing error is reported only when the error is also
+// a nil value. With a trailing bool, only when the bool is the constant true.
+// Both rules pair two results, so this spec models them once. Its second
+// result, s, is one of:
+//
+//   Bad   the nil error (constant nil), or the constant true
+//   Good  a non-nil error (errors.New), or the constant false
+//   Out   a value from outside: a call's result or a parameter
+//
+// The program:
+//
+//   p := P0 or P1                  an earlier join with two edges: nil, &T{}, f()
+//   switch {                       the return's own block joins three edges
+//   case c0: u, s = U0, S0
+//   case c1: u, s = U1, S1
+//   default: u, s = U2, S2
+//   }
+//   return u, s
+//
+// u is either a φ-node of the return's block (uAt == AtJoin), or p from the
+// earlier join (uAt == Earlier). s is either a φ-node of the return's block
+// (sAt == AtJoin), or one value set before the join (sAt == Single, value sv).
+//
+// The rule, from design/rules.md: a return whose s is a φ-node of its own
+// block is judged along each incoming edge, and every other φ-node of that
+// block is read along the same edge. Otherwise u and s are judged whole.
+//
+// The claim. The rule reports exactly when some run returns a nil constant
+// with a Bad constant:
+//
+//   ReportMeansNilWithBad   when reported, the witness run returns nil with Bad
+//   NilWithBadIsReported    whenever a run returns nil with Bad, it is reported
+//
+// The witness run takes the edge the rule found, and the first nil edge of the
+// earlier join.
+//
+// ASSUME-1: the two joins branch on independent conditions, so a run may take
+//   any pair of edges. See nil_value_correlated.fsl for what breaks when they
+//   do not.
+// ASSUME-2: u and s are φ-nodes of the return's own block, or values from
+//   before it. pairing_other_block.fsl shows the false report when the φ-nodes
+//   sit in an earlier block, or are loads of results in a function with a
+//   defer.
+// ASSUME-3 (representation only): the operands are constants or values from
+//   outside. Deeper φ-nodes and nil checks are nil_value.fsl's subject.
+// ASSUME-4 (representation only): three edges into the return's block, two
+//   into the earlier join.
+spec Pairing {
+  enum Op { Nil, Alloc, Ext }
+  enum Sec { Bad, Good, Out }
+  enum Where { AtJoin, Earlier, Single }
+  enum Val { NilConst, NilExt, NonNil }
+  enum SVal { BadConst, BadExt, GoodVal }
+  enum Pc { Config, Ready, Judged, Joined, Returned }
+  type Edge = 0..2
+  type Pre = 0..1
+
+  state {
+    pc: Pc, cfg: 0..5,
+    uAt: Where, sAt: Where, sv: Sec,
+    pe: Map<Pre, Op>, u: Map<Edge, Op>, s: Map<Edge, Sec>,
+    // the verdict and its witness
+    rep: Bool, wk: Edge, we: Pre,
+    // the run
+    pv: Val, ru: Val, rs: SVal, follow: Bool
+  }
+
+  init {
+    pc = Config  cfg = 0
+    uAt = AtJoin  sAt = AtJoin  sv = Good
+    forall e: Pre { pe[e] = Alloc }
+    forall k: Edge { u[k] = Alloc  s[k] = Good }
+    rep = false  wk = 0  we = 0
+    pv = NonNil  ru = NonNil  rs = GoodVal  follow = false
+  }
+
+  // --- the rule -------------------------------------------------------------------
+
+  def earlierNil() = exists e: Pre { pe[e] == Nil }
+  def uNilAlong(k: Edge) = if uAt == AtJoin then u[k] == Nil else earlierNil()
+  def uNil() = if uAt == AtJoin then (exists k: Edge { u[k] == Nil }) else earlierNil()
+  def pairs(k: Edge) = uNilAlong(k) and s[k] == Bad
+  def reported() =
+    if sAt == AtJoin then (exists k: Edge { pairs(k) }) else (uNil() and sv == Bad)
+
+  // The witness: the edge the rule judged, and a nil edge of the earlier join.
+  def witnessEdge() =
+    if sAt == AtJoin then (if pairs(0) then 0 else if pairs(1) then 1 else 2)
+    else (if uAt != AtJoin or u[0] == Nil then 0 else if u[1] == Nil then 1 else 2)
+  def witnessPre() = if pe[0] == Nil then 0 else 1
+
+  def shapeOk() = uAt != Single and sAt != Earlier
+
+  // --- the program ----------------------------------------------------------------
+
+  // The program is fixed one block at a time, in this order, before the run.
+  action setShape(ua: Where, sa: Where, v: Sec) {
+    requires pc == Config  requires cfg == 0
+    uAt = ua  sAt = sa  sv = v  cfg = 1
+  }
+  action setEarlier(p0: Op, p1: Op) {
+    requires pc == Config  requires cfg == 1
+    pe[0] = p0  pe[1] = p1  cfg = 2
+  }
+  action setEdge0(uo: Op, so: Sec) {
+    requires pc == Config  requires cfg == 2
+    u[0] = uo  s[0] = so  cfg = 3
+  }
+  action setEdge1(uo: Op, so: Sec) {
+    requires pc == Config  requires cfg == 3
+    u[1] = uo  s[1] = so  cfg = 4
+  }
+  action setEdge2(uo: Op, so: Sec) {
+    requires pc == Config  requires cfg == 4
+    u[2] = uo  s[2] = so  cfg = 5
+  }
+  action start() {
+    requires pc == Config  requires cfg == 5  requires shapeOk()
+    pc = Ready
+  }
+
+  action judge() {
+    requires pc == Ready
+    pc = Judged
+    rep = reported()  wk = witnessEdge()  we = witnessPre()
+  }
+
+  // --- the run --------------------------------------------------------------------
+
+  def ev(o: Op, nilOut: Bool) =
+    if o == Nil then NilConst else if o == Alloc then NonNil
+    else if nilOut then NilExt else NonNil
+  def evs(o: Sec, badOut: Bool) =
+    if o == Bad then BadConst else if o == Good then GoodVal
+    else if badOut then BadExt else GoodVal
+
+  action passEarlier(e: Pre, n: Bool) {
+    requires pc == Judged
+    pc = Joined
+    pv = ev(pe[e], n)
+    follow = rep and e == we
+  }
+
+  action join(k: Edge, nu: Bool, bs: Bool) {
+    requires pc == Joined
+    pc = Returned
+    ru = if uAt == AtJoin then ev(u[k], nu) else pv
+    rs = if sAt == AtJoin then evs(s[k], bs) else evs(sv, bs)
+    follow = follow and k == wk
+  }
+
+  terminal { pc == Returned }
+
+  // --- what is proved -------------------------------------------------------------
+
+  invariant ReportMeansNilWithBad {
+    (follow and pc == Returned) => (ru == NilConst and rs == BadConst)
+  }
+  invariant NilWithBadIsReported {
+    (pc == Returned and ru == NilConst and rs == BadConst) => reported()
+  }
+
+  // --- auxiliary ------------------------------------------------------------------
+
+  invariant ShapeValid { pc != Config => shapeOk() }
+  invariant VerdictFixed {
+    (pc == Judged or pc == Joined or pc == Returned) =>
+      (rep == reported() and wk == witnessEdge() and we == witnessPre())
+  }
+  invariant FollowOnlyWhenReported { follow => (rep and (pc == Joined or pc == Returned)) }
+  invariant EarlierFollowed { (follow and uAt == Earlier) => pv == NilConst }
+  invariant EarlierTraced { pv == NilConst => earlierNil() }
+  invariant FreshBeforeRun { (pc != Joined and pc != Returned) => (pv == NonNil and not follow) }
+  invariant ReturnedTraced {
+    pc == Returned => (
+      (uAt == AtJoin => (ru == NilConst => (exists k: Edge {
+        u[k] == Nil and (sAt == AtJoin => (rs == BadConst => s[k] == Bad)) })))
+      and (uAt == Earlier => (ru == NilConst => earlierNil()))
+      and (sAt == Single => (rs == BadConst => sv == Bad))
+      and (sAt == AtJoin => (rs == BadConst => exists k: Edge { s[k] == Bad }))
+    )
+  }
+
+  // --- witnesses ------------------------------------------------------------------
+
+  // var u *T; var err error; if b { u = x } else { err = e }; return u, err
+  reachable EdgesKeptApart {
+    pc == Returned and not reported() and uAt == AtJoin and sAt == AtJoin
+    and (exists k: Edge { u[k] == Nil }) and (exists k: Edge { s[k] == Bad })
+  }
+  reachable NilWithNilErrorOnOneEdge {
+    pc == Returned and reported() and uAt == AtJoin and sAt == AtJoin
+    and ru == NilConst and rs == BadConst
+  }
+  reachable EarlierNilWithBadEdge {
+    pc == Returned and reported() and uAt == Earlier and sAt == AtJoin and follow
+  }
+  reachable SingleBadWithNilPhi {
+    pc == Returned and reported() and uAt == AtJoin and sAt == Single and follow
+  }
+  // return nil, err: an error from outside is not a nil value.
+  reachable OutsideErrorNotReported {
+    pc == Returned and not reported() and ru == NilConst and rs == BadExt
+  }
+}
