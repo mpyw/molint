@@ -79,7 +79,7 @@ Nothing is reported in a generated file. Test files are checked like any other f
 
 ### `return-nil`
 
-A return must not give a nil pointer.
+A return must not give a nil pointer. Only pointers are checked: a slice, a map, a func, a channel or an interface may still be returned as nil.
 
 <table>
 <thead>
@@ -202,7 +202,7 @@ func F() []T {
 
 </td>
 <td>✅</td>
-<td>A slice is not a pointer. A nil slice works as an empty one</td>
+<td>A nil slice is Go's empty slice, and nothing claims that a value is present</td>
 </tr>
 </tbody>
 </table>
@@ -404,7 +404,7 @@ mo.Some[[]int](nil)
 
 </td>
 <td>❌</td>
-<td>A nil slice works as an empty one, but the option then encodes in JSON as <code>null</code>, as <code>mo.None</code> does</td>
+<td><code>Some</code> claims that a value is present, but it holds nil. It then encodes in JSON as <code>null</code>, as <code>mo.None</code> does</td>
 </tr>
 <tr>
 <td>
