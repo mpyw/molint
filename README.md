@@ -185,6 +185,8 @@ A function literal is exempt. So is a method that implements an interface, since
 
 #### Fix
 
+For `*T`, return `mo.Option[*T]`:
+
 ```go
 func F() mo.Option[*T] {
 	if !found {
@@ -193,6 +195,26 @@ func F() mo.Option[*T] {
 	return mo.Some(&T{})
 }
 ```
+
+For `(*T, error)`, return an error where the value is absent. If absence is not a failure, return `mo.Option[*T]` beside the error:
+
+```go
+func F() (*T, error) {
+	if !found {
+		return nil, ErrNotFound
+	}
+	return &T{}, nil
+}
+
+func F() (mo.Option[*T], error) {
+	if !found {
+		return mo.None[*T](), nil
+	}
+	return mo.Some(&T{}), nil
+}
+```
+
+For `(*T, bool)`, return `mo.Option[*T]` instead, as [`return-bool`](#return-bool) asks.
 
 ### `return-bool`
 
