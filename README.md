@@ -183,7 +183,7 @@ return p // not reported
 
 A function literal is exempt. So is a method that implements an interface, since the interface fixes its signature.
 
-Fix:
+#### Fix
 
 ```go
 func F() mo.Option[*T] {
@@ -241,7 +241,7 @@ func IsAdmin() bool
 
 Functions, methods, methods of named interfaces, and named function types are checked. A function literal is exempt. So is a method that implements an interface: the interface's own declaration is reported instead, when it is in the package.
 
-Fix:
+#### Fix
 
 ```go
 func Find() mo.Option[User]
@@ -298,7 +298,7 @@ func Close() error
 </tbody>
 </table>
 
-Fix:
+#### Fix
 
 ```go
 func Find() mo.Result[*User]
@@ -359,7 +359,7 @@ mo.Some[[]int](nil)
 </tbody>
 </table>
 
-Fix:
+#### Fix
 
 ```go
 mo.None[*T]()          // the value is absent
@@ -380,7 +380,7 @@ func Load() mo.Result[Config] {
 
 A return, an argument, a store, a send, and a method call are uses. A comparison is not. A zero `mo.Option` is None, which is fine, so it is not reported.
 
-Fix:
+#### Fix
 
 ```go
 func Load() mo.Result[Config] {
@@ -458,7 +458,7 @@ n.OrEmpty()
 </tbody>
 </table>
 
-Fix:
+#### Fix
 
 ```go
 if u, ok := o.Get(); ok {
@@ -528,7 +528,7 @@ o.Get()
 </tbody>
 </table>
 
-Fix:
+#### Fix
 
 ```go
 if v, ok := o.Get(); ok {
