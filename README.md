@@ -1,4 +1,10 @@
-# molint
+<div align="center">
+  <h1>molint</h1>
+
+  [![CI](https://github.com/mpyw/molint/actions/workflows/ci.yml/badge.svg)](https://github.com/mpyw/molint/actions/workflows/ci.yml)
+  [![Codecov](https://codecov.io/gh/mpyw/molint/graph/badge.svg)](https://codecov.io/gh/mpyw/molint)
+  [![Go Reference](https://pkg.go.dev/badge/github.com/mpyw/molint.svg)](https://pkg.go.dev/github.com/mpyw/molint)
+</div>
 
 Go linter that enforces [samber/mo](https://github.com/samber/mo): absence is [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option), not a nil pointer or a trailing `bool`.
 
