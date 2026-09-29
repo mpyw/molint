@@ -3,7 +3,7 @@
 Go linter that enforces [samber/mo](https://github.com/samber/mo): absence is `mo.Option`, not a nil pointer or a trailing `bool`.
 
 > [!WARNING]
-> Work in progress. The rules are strict on purpose. They are meant for applications that choose samber/mo, not for libraries.
+> Work in progress. The rules are strict on purpose. They are meant for applications that choose [samber/mo](https://github.com/samber/mo), not for libraries.
 
 ## Overview
 
@@ -35,11 +35,11 @@ user.go:23:18: OrEmpty on mo.Option[*User] gives nil when it is empty; use Get a
 
 Every report ends with the name of its rule. That name is what `//molint:ignore` takes.
 
-molint reads the shape of signatures, and follows values only inside one function. It does not look for nil panics. Use it beside [nilaway](https://github.com/uber-go/nilaway):
+molint reads the shape of signatures, and follows values only inside one function. It does not look for nil panics. Use it beside [uber-go/nilaway](https://github.com/uber-go/nilaway):
 
 | Tool | Job | Reads |
 | --- | --- | --- |
-| nilaway | Finds possible nil panics | The flow of values across functions |
+| [uber-go/nilaway](https://github.com/uber-go/nilaway) | Finds possible nil panics | The flow of values across functions |
 | molint | Enforces the use of `mo.Option` and `mo.Result` | The shape of signatures and code |
 
 ## Install
@@ -639,7 +639,7 @@ These are not checked:
 
 | Case | Why |
 | --- | --- |
-| A nil from a parameter, a field, or a call | Values are followed only inside one function. nilaway follows them further |
+| A nil from a parameter, a field, or a call | Values are followed only inside one function. [uber-go/nilaway](https://github.com/uber-go/nilaway) follows them further |
 | `mo.TupleToOption`, `mo.TupleToResult`, `mo.EmptyableToOption` | They check their arguments at run time |
 | A zero `mo.Result` left out of a composite literal, as in `Holder{}` | Fields are not followed |
 | A constructor or method of mo passed as a function value | Calls through function values are not followed |
