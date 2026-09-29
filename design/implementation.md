@@ -59,17 +59,17 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 
 molint and nilaway do not exclude each other. molint stops the ways of writing that make a nil. nilaway finds the nils that still reach a dereference. So a rule that needs to follow values across functions belongs to nilaway, not here.
 
-A sample of 15 cases, with samber/mo v1.17.0 and nilaway `v0.0.0-20260918162853-acb8859b9031`, gave this:
+A sample of 15 cases, with samber/mo v1.17.0 and nilaway `v0.0.0-20260918162853-acb8859b9031`, gave this. ✅ means the result is valid: the tool reports a nil that can happen, or stays silent where none can. ❌ means it misses one. Neither tool gave a false report.
 
 | Case | molint | nilaway |
 | --- | --- | --- |
-| Code as molint asks: `Get` with `ok` checked, `MustGet`, `OrElse(guest)`, `ForEach`, `IsPresent` then `MustGet`, and the same for `mo.Result` | Nothing | Nothing |
-| A map lookup dereferenced, as in `users[name].Name` | Nothing | Reported |
-| nil passed as an argument, then dereferenced | Nothing | Reported |
-| A field never set, dereferenced directly or through a function that returns it | Nothing | Nothing |
-| `return nil`, then the result dereferenced | At the `return` | At the dereference |
-| `u, _ := opt.Get()`, then `u.Name` | At `Get` | At the dereference |
-| `opt.OrEmpty().Name` | Reported | Nothing |
+| Code as molint asks: `Get` with `ok` checked, `MustGet`, `OrElse(guest)`, `ForEach`, `IsPresent` then `MustGet`, and the same for `mo.Result` | ✅ | ✅ |
+| A map lookup dereferenced, as in `users[name].Name` | ❌ | ✅ |
+| nil passed as an argument, then dereferenced | ❌ | ✅ |
+| A field never set, dereferenced directly or through a function that returns it | ❌ | ❌ |
+| `return nil`, then the result dereferenced | ✅ | ✅ |
+| `u, _ := opt.Get()`, then `u.Name` | ✅ | ✅ |
+| `opt.OrEmpty().Name` | ✅ | ❌ |
 
 What this means for molint:
 
