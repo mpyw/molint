@@ -152,8 +152,16 @@ func SomeMapMade() mo.Option[map[int]int] {
 	return mo.Some(make(map[int]int))
 }
 
-// Not reported: a nil slice works as an empty one.
-func SomeSliceNil() mo.Option[[]int] { return mo.Some[[]int](nil) }
+// A nil slice works as an empty one, but a present option that holds nil
+// encodes in JSON as null, as None does.
+func SomeSliceNil() mo.Option[[]int] {
+	return mo.Some[[]int](nil) // want `^mo\.Some is given nil; pass a non-nil value, or use mo\.None \[wrap-nil\]$`
+}
+
+// Not reported: an empty slice is not nil.
+func SomeSliceEmpty() mo.Option[[]int] {
+	return mo.Some([]int{})
+}
 
 // Not reported: a value type.
 func SomeInt() mo.Option[int] {
@@ -258,9 +266,8 @@ func OkAddr() mo.Result[*T] {
 	return mo.Ok(&T{})
 }
 
-// Not reported: a nil slice works as an empty one.
 func OkSliceNil() mo.Result[[]int] {
-	return mo.Ok[[]int](nil)
+	return mo.Ok[[]int](nil) // want `^mo\.Ok is given nil; pass a non-nil value \[wrap-nil\]$`
 }
 
 func OkMapNil() mo.Result[map[int]int] {

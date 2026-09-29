@@ -138,11 +138,11 @@ A nil value must not be passed to these constructors of mo:
 
 | Call | Reported when |
 | --- | --- |
-| `mo.Some[T](v)` | A nil of `T` breaks on use, and `v` is a nil value |
+| `mo.Some[T](v)` | `T` can be nil, and `v` is a nil value |
 | `mo.Ok[T](v)` | The same |
 | `mo.Err[T](err)` | `err` is a nil value |
 
-A nil breaks on use when `T` is a pointer, an interface, a map, a func or a channel. A nil slice does not: it works as an empty one. A type parameter counts as none of these, whatever its constraint.
+`T` can be nil when it is a pointer, an interface, a map, a func, a channel or a slice. A slice counts too, although a nil slice works as an empty one. A present option that holds nil says two things at once, and samber/mo encodes `mo.Some[[]int](nil)` in JSON as `null`, as it does `mo.None`. A type parameter counts as none of these, whatever its constraint.
 
 A call counts when SSA calls the constructor statically. A constructor held in a local variable, as in `f := mo.Some[*T]; f(nil)`, lowers to a static call and is reported. One passed through a parameter or a field is not followed.
 
@@ -175,7 +175,7 @@ Message: `a zero mo.Result[T] is Ok with a zero value; build it with mo.Ok or mo
 
 ## `unwrap-nil`
 
-These calls must not be made on an `Option[T]` or a `Result[T]` whose nil breaks on use. That is a `T` that is a pointer, an interface, a map, a func or a channel, as for [`wrap-nil`](#wrap-nil):
+These calls must not be made on an `Option[T]` or a `Result[T]` whose nil breaks on use. That is a `T` that is a pointer, an interface, a map, a func or a channel. A slice is left out, unlike for [`wrap-nil`](#wrap-nil): a nil slice that comes out works as an empty one.
 
 | Call | Reported when |
 | --- | --- |

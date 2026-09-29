@@ -403,8 +403,19 @@ mo.Some[[]int](nil)
 ```
 
 </td>
+<td>❌</td>
+<td>A nil slice works as an empty one, but the option then encodes in JSON as <code>null</code>, as <code>mo.None</code> does</td>
+</tr>
+<tr>
+<td>
+
+```go
+mo.Some([]int{})
+```
+
+</td>
 <td>✅</td>
-<td>A nil slice works as an empty one</td>
+<td>An empty slice is not nil, and encodes as <code>[]</code></td>
 </tr>
 </tbody>
 </table>

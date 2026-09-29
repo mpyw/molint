@@ -25,6 +25,16 @@ func IsPointer(t types.Type) bool {
 	return ok
 }
 
+// CanBeNil reports whether a value of type t can be nil: a type whose nil
+// breaks on use, or a slice. A type parameter can be none of these: its
+// underlying type is an interface, never a slice.
+func CanBeNil(t types.Type) bool {
+	if _, ok := t.Underlying().(*types.Slice); ok {
+		return true
+	}
+	return NilBreaks(t)
+}
+
 // NilBreaks reports whether a nil of type t breaks on use: a pointer, an
 // interface, a map, a func or a channel. A nil slice does not, since it
 // works as an empty one. A type parameter counts as none of these, although
