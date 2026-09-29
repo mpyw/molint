@@ -149,8 +149,8 @@ func F() (*T, bool) {
 ```
 
 </td>
-<td>✅</td>
-<td>For this rule. <code>return-bool</code> reports the signature</td>
+<td>⚠️</td>
+<td>Not reported by this rule. <code>return-bool</code> reports the signature</td>
 </tr>
 <tr>
 <td>
