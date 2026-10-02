@@ -56,8 +56,6 @@ type Trailing int
 const (
 	// TrailingNone means the last result is neither a bool nor an error. It
 	// is the zero value.
-	//
-	//declscope:ignore overexported // the enum is incomplete without its zero value
 	TrailingNone Trailing = iota
 	// TrailingBool means the last result is the predeclared bool.
 	TrailingBool
@@ -89,8 +87,6 @@ const (
 	// NotMo means the type is not one of samber/mo.
 	NotMo Mo = iota
 	// Option is mo.Option.
-	//
-	//declscope:ignore overexported // the enum is incomplete without it
 	Option
 	// Result is mo.Result.
 	Result
