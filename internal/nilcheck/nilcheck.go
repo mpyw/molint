@@ -21,8 +21,6 @@ type State int
 const (
 	// Unknown means no check on the way says anything. It is the zero value,
 	// so a caller that switches on Nil and NonNil falls through to it.
-	//
-	//declscope:ignore overexported // the enum is incomplete without its zero value
 	Unknown State = iota
 	// Nil means the value was checked to be nil.
 	Nil
