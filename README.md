@@ -313,7 +313,7 @@ func Cut() (string, string, bool)
 
 </td>
 <td>❌</td>
-<td>The same, with several values</td>
+<td>Absence is a trailing <code>bool</code>, after several values</td>
 </tr>
 <tr>
 <td>
@@ -372,7 +372,7 @@ func Load() (Config, Meta, error)
 
 </td>
 <td>❌</td>
-<td>The same, with several values</td>
+<td>Failure is a trailing <code>error</code>, after several values</td>
 </tr>
 <tr>
 <td>
@@ -427,7 +427,7 @@ u.Manager = nil
 
 </td>
 <td>❌</td>
-<td>The same, in an assignment</td>
+<td>The field holds nil, so it may be absent</td>
 </tr>
 <tr>
 <td>
@@ -508,7 +508,7 @@ case nil:
 
 </td>
 <td>❌</td>
-<td>The same</td>
+<td>The field may be absent</td>
 </tr>
 <tr>
 <td>
@@ -604,7 +604,7 @@ mo.Some[map[string]int](nil)
 
 </td>
 <td>❌</td>
-<td>The option is present, and writing to its map panics. The same holds for a func and a channel</td>
+<td>The option is present, and writing to its map panics. A nil func panics when called, and a nil channel blocks forever</td>
 </tr>
 <tr>
 <td>

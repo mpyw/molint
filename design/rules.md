@@ -99,7 +99,8 @@ Checked declarations:
 | A function or a method | Its name |
 | A method of a named interface type | The method's name |
 | A named function type, `type F func() (T, bool)` | The type's name |
-| A named interface or function type declared inside a function body | The same as at package level |
+| A named interface type declared inside a function body | The method's name |
+| A named function type declared inside a function body | The type's name |
 
 An alias of an interface or function literal, such as `type A = interface{ M() (int, bool) }`, is not reported, since it names no new type. It still counts for the exemption.
 
@@ -193,7 +194,7 @@ A nil value must not be passed to these constructors of mo:
 | Call | Reported when |
 | --- | --- |
 | `mo.Some[T](v)` | `T` can be nil, and `v` is a nil value |
-| `mo.Ok[T](v)` | The same |
+| `mo.Ok[T](v)` | `T` can be nil, and `v` is a nil value |
 | `mo.Err[T](err)` | `err` is a nil value |
 
 `T` can be nil when it is a pointer, an interface, a map, a func, a channel or a slice. A slice counts too, although a nil slice works as an empty one. A present option that holds nil says two things at once, and samber/mo encodes `mo.Some[[]int](nil)` in JSON as `null`, as it does `mo.None`. A type parameter counts as none of these, whatever its constraint.
@@ -311,7 +312,7 @@ molint -return-bool=false ./...                  # every rule on by default, exc
 | Gap | Why |
 | --- | --- |
 | A nil that comes from outside the function, or from a field or a call | molint follows values only inside one function |
-| Branches whose conditions depend on each other, as in `if c { p = x }; if c { return p }` | Branches are taken as independent, so this is reported although no run returns nil. The same holds for a nil check that can never succeed |
+| Branches whose conditions depend on each other, as in `if c { p = x }; if c { return p }` | Branches are taken as independent, so this is reported although no run returns nil. A nil check that can never succeed is reported too, as in `p := &T{}; if p == nil { return p }` |
 | A nil check, or a comparison with the zero `Result`, on a variable that SSA does not lift. `if p == nil { p = def }` on a captured `p`, or on a named result in a function with a `defer`, is one | A later load follows the stores that reach it. The check on an earlier load of the same variable is not carried over. A nil constant stored on an earlier path is then reported |
 | `mo.TupleToOption`, `mo.TupleToResult`, `mo.EmptyableToOption` | They check their arguments at run time |
 | A field left out of a composite literal, for `field-nil-store` and `result-zero` | SSA emits no store for it. exhaustruct makes it written |
