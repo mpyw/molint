@@ -833,6 +833,18 @@ if err != nil {
 v := o.OrElse(10)
 ```
 
+## Agent skill
+
+[`skills/molint-authoring`](skills/molint-authoring/SKILL.md) is a skill for an AI agent writing code under molint. It says how to fix each rule with samber/mo, which fixes only hide a problem, and when an ignore is right. The binary carries it:
+
+```bash
+molint skill install                                # the agents already set up in this project
+molint skill install --agent claude-code --scope user
+molint skill list                                   # where it is, and whether it is current
+```
+
+Without the binary, `gh skill install mpyw/molint molint-authoring --agent claude-code` writes to the same directories. The installer is [go-skill-embed](https://github.com/mpyw/go-skill-embed).
+
 ## Ignoring a report
 
 Write `//molint:ignore` with the rules to silence and a reason after `//`.

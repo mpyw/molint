@@ -22,7 +22,10 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w
+      # An installed skill names the release it describes. The module version
+      # the go command records reads +dirty here, since every build after the
+      # first sees the earlier ones in dist/.
+      - -s -w -X main.skillsRelease={{ .Version }}
 
 archives:
   - id: default

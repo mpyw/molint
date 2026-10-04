@@ -12,7 +12,9 @@ It reads the shape of signatures, and follows values only inside one function. I
 
 ```text
 analyzer.go              Analyzer, one flag per rule, ErrNoSSA
-cmd/molint/              singlechecker entry point
+skills.go                Skills: the embedded skills/ directory
+skills/                  the agent skills, installed by `molint skill install`
+cmd/molint/              singlechecker entry point, and the skill subcommand
 internal/                the rules: one flat package, one namespace per file
   run.go                 Run: every rule over the package, then the reports in order
   checker.go             the per-pass state, and reporting through the directives
@@ -51,8 +53,9 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 
 | Rule | Why |
 | --- | --- |
-| No `//declscope:core` | A core file hides its names from the naming rule |
+| No `//declscope:core` under `internal/` | A core file hides its names from the naming rule |
 | A rule's entry point is `//declscope:package`, with the file that calls it | `run.go` and `calls.go` call into each rule's file |
+| `analyzer.go` is `//declscope:core` | It is the root package's own file, and its names are public API. `skills.go` is a second namespace, which would otherwise make `ErrNoSSA` carry `analyzer` |
 | `flow` is split by concept: `site.go`, `tracer.go`, `store.go`, `return.go`, `range.go`, `pair.go` | Each name carries its file's concept, as `SiteAt`, `NilTracer`, `storesReaching`, `RangeReturns`. One file would have made every name carry `flow` |
 | `nilcheck.Unknown`, `typeutil.TrailingNone` and `typeutil.Option` stay exported with no ignore | No other package names them, but each enum is incomplete without them. Since declscope 0.18.0, `shrink` judges a `const` block of one type as one set, so the other values keep them exported |
 
@@ -145,7 +148,7 @@ mise x -- ./test_all.sh  # tests, golangci-lint, declscope shrink, declscope, sp
 - `testdata/src/*` are analysistest packages, one or more per rule. `github.com/samber/mo` there is a stub, with bodies copied from v1.17.0.
 - `analyzer_test.go` runs the default flags, `-return-error`, and `-return-bool=false`. It runs a package again after restoring a flag, to prove that flags are read on each run. No test may call `t.Parallel`, since the flags are global.
 - A directive without a reason cannot be pinned in a fixture: the expectation comment on its line would be read as the reason. `internal/directive` tests it.
-- **Coverage is held at 99.5% of statements** (`coverage.sh`). The only statement left is `main`. Code no input reaches is deleted, not excluded.
+- **Coverage is held at 99.5% of statements** (`coverage.sh`). The only statements left are in `main`, which hands over to the driver. Code no input reaches is deleted, not excluded.
 
 ### Formal specs
 

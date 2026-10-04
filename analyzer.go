@@ -4,6 +4,8 @@
 // pointer, a trailing bool, or a trailing error. An Option or a Result must
 // not hold or give a nil it should not. The rules are listed in
 // design/rules.md, and each has a flag of its name.
+//
+//declscope:core
 package molint
 
 import (
