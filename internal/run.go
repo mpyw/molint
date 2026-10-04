@@ -14,15 +14,15 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// ErrRunWithoutSSA is returned by Run when the pass carries no buildssa
+// errRunWithoutSSA is returned by Run when the pass carries no buildssa
 // result, which means the analyzer was registered without its requirement.
-var ErrRunWithoutSSA = errors.New("molint: buildssa result missing")
+var errRunWithoutSSA = errors.New("molint: buildssa result missing")
 
 // Run analyzes one package.
 func Run(pass *analysis.Pass, cfg Config) (any, error) {
 	info, ok := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
 	if !ok {
-		return nil, ErrRunWithoutSSA
+		return nil, errRunWithoutSSA
 	}
 	c := newChecker(pass, cfg)
 	for _, p := range c.directives.Problems() {

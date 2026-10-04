@@ -11,10 +11,9 @@ import (
 	"testing"
 )
 
-// TestVersionFlagReplacesTheDrivers registers -V as main does. The driver
-// then leaves it alone, since it registers its own only when none is.
+// TestVersionFlagReplacesTheDrivers checks that init registered -V. The
+// driver then leaves it alone, since it registers its own only when none is.
 func TestVersionFlagReplacesTheDrivers(t *testing.T) {
-	registerVersionFlag()
 	f := flag.Lookup("V")
 	if f == nil {
 		t.Fatal("-V is not registered")

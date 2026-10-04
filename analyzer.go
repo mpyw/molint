@@ -25,10 +25,6 @@ var Analyzer = &analysis.Analyzer{
 	Run:      run,
 }
 
-// ErrNoSSA is returned when the pass carries no buildssa result, which means
-// the analyzer was registered without its requirement.
-var ErrNoSSA = internal.ErrRunWithoutSSA
-
 // on holds the flag of each rule.
 var on = make(map[rule.Name]*bool)
 

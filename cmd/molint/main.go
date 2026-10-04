@@ -13,10 +13,17 @@ import (
 	"github.com/mpyw/molint"
 )
 
-func main() {
-	// Both run before the driver. It reads every non-flag argument as a
-	// package pattern, and it registers its own -V only when none is.
+// init runs both before the driver. The driver reads every non-flag argument
+// as a package pattern, and it registers its own -V only when none is.
+//
+// They run here rather than in main so that the test binary runs them too.
+// Intercept reads only the first argument, and a test binary's first
+// argument is a -test flag, so it hands over at once.
+func init() {
 	skills.Intercept()
 	registerVersionFlag()
+}
+
+func main() {
 	singlechecker.Main(molint.Analyzer)
 }

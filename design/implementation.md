@@ -11,7 +11,7 @@ It reads the shape of signatures, and follows values only inside one function. I
 ## Architecture
 
 ```text
-analyzer.go              Analyzer, one flag per rule, ErrNoSSA
+analyzer.go              Analyzer, one flag per rule
 skills.go                Skills: the embedded skills/ directory
 skills/                  the agent skills, installed by `molint skill install`
 cmd/molint/              singlechecker entry point, the skill subcommand, and -V=full
@@ -55,7 +55,7 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 | --- | --- |
 | No `//declscope:core` under `internal/` | A core file hides its names from the naming rule |
 | A rule's entry point is `//declscope:package`, with the file that calls it | `run.go` and `calls.go` call into each rule's file |
-| `analyzer.go` is `//declscope:core` | It is the root package's own file, and its names are public API. `skills.go` is a second namespace, which would otherwise make `ErrNoSSA` carry `analyzer` |
+| `analyzer.go` is `//declscope:core` | It is the root package's own file. `skills.go` is a second namespace, which would otherwise make `on` and `run` carry `analyzer` |
 | `flow` is split by concept: `site.go`, `tracer.go`, `store.go`, `return.go`, `range.go`, `pair.go` | Each name carries its file's concept, as `SiteAt`, `NilTracer`, `storesReaching`, `RangeReturns`. One file would have made every name carry `flow` |
 | `nilcheck.Unknown`, `typeutil.TrailingNone` and `typeutil.Option` stay exported with no ignore | No other package names them, but each enum is incomplete without them. Since declscope 0.18.0, `shrink` judges a `const` block of one type as one set, so the other values keep them exported |
 
@@ -145,6 +145,8 @@ A bare return that loads both results from followed variables is paired along ea
 | `-V=full` is registered before the driver | x/tools registers a `-V` that prints `devel` for every binary, but only when no `-V` is registered yet. `go vet -vettool` reads the line to identify the tool |
 | A release stamps its version with `-X main.version` | goreleaser builds every platform into `dist/` in one checkout. Each build after the first sees untracked files, so the module version the go command records reads `+dirty` |
 | `versionFlag` takes its output, its exit and the executable as fields | The tests reach every branch in one process. The coverage floor leaves no room for code that only a subprocess runs |
+| `init` intercepts `molint skill` and registers `-V` | The test binary runs `init` too, so both are covered. `main` only hands over to the driver |
+| No exported error for a pass without SSA | A driver runs `Requires` first, so only a hand-built `analysis.Pass` meets it. `internal.errRunWithoutSSA` stays as a guard |
 
 ## Testing
 

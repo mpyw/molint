@@ -8,7 +8,7 @@ import (
 )
 
 func TestRunWithoutSSA(t *testing.T) {
-	if _, err := Run(&analysis.Pass{ResultOf: map[*analysis.Analyzer]any{}}, Config{}); !errors.Is(err, ErrRunWithoutSSA) {
-		t.Errorf("Run() error = %v, want %v", err, ErrRunWithoutSSA)
+	if _, err := Run(&analysis.Pass{ResultOf: map[*analysis.Analyzer]any{}}, Config{}); !errors.Is(err, errRunWithoutSSA) {
+		t.Errorf("Run() error = %v, want %v", err, errRunWithoutSSA)
 	}
 }
