@@ -25,6 +25,7 @@ internal/                the rules: one flat package, one namespace per file
   unwrapnil.go           unwrap-nil
   unwrapdiscard.go       unwrap-discard
   resultzero.go          result-zero
+  fieldnil.go            field-nil-store and field-nil-compare
 internal/rule/           the rule names, shared by flags, messages and directives
 internal/directive/      //molint: comments
 internal/flow/           following a value back through one function
@@ -75,7 +76,7 @@ What this means for molint:
 
 - nilaway does not report code that follows molint's rules. It reads the `ok` of `Get` as a guard.
 - Where both report one cause, molint reports the cause and nilaway the dereference. Fixing it as molint says clears both.
-- A field that is never set is missed by both. molint gave that case up with the non-nil contract.
+- A field that is never set is missed by both. molint gave up proving fields non-nil with the non-nil contract. `field-nil-store` with exhaustruct reports a nil written into a field, and `field-nil-compare` reports a field checked for nil. Both are off by default.
 - nilaway does not know that `OrEmpty` gives nil for an empty Option. That is what `unwrap-nil` is for.
 
 The sample is small. Run both over a real application before relying on these rows.
@@ -107,6 +108,18 @@ A range-over-func body is a synthetic function literal (`Synthetic == "range-ove
 `flow.Pair` holds a nil pointer to the error or the bool beside it. Where either value is a φ, each incoming edge is judged on its own, with the other value read along the same edge. That repeats while φs remain, into earlier blocks. A value defined before the φ's block takes the checks on the edge too. Before a φ is taken apart, a nil check at the current sites settles the value for the whole path.
 
 A bare return that loads both results from followed variables is paired along each path back to the stores, both values read on that path.
+
+## Fields
+
+`field-nil-store` and `field-nil-compare` do not prove a field non-nil. They look for evidence that a field is used as optional: a nil written into it, or a check for nil on it. A field with no such evidence is trusted. That is a gap, not a hole in a contract, since nothing else relies on the field being non-nil.
+
+| Decision | Why |
+| --- | --- |
+| A field left out of a composite literal is left to exhaustruct | go/ssa emits no store for it. `compLit` clears memory only when the destination is not fresh, as in `*p = S{...}` |
+| Both rules live in one file | They share which fields count and how a field is spelled |
+| Only fields declared in the package count | molint has no facts, so it cannot tell whether another package's file is generated. Protobuf and SDK structs are full of `*string` |
+| The field is taken from the generic type's origin | A diagnostic then spells `Box[E].V` with `*E` at every instance |
+| Both rules are off by default | `field-nil-store` misses every left-out field without exhaustruct. `field-nil-compare` reports a field set on first use and a check made just in case |
 
 ## Rejected designs
 

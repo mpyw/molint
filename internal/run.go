@@ -37,6 +37,7 @@ func Run(pass *analysis.Pass, cfg Config) (any, error) {
 		c.checkReturnNil(fn)
 		c.checkCalls(fn)
 		c.checkResultZero(fn)
+		c.checkFieldNil(fn)
 	}
 	// Every function the pass reports on is seen in full, in a package's
 	// test variant as in the ordinary one, so an ignore that silenced
