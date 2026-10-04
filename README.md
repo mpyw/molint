@@ -53,7 +53,7 @@ molint reads the shape of signatures, and follows values only inside one functio
 
 | Method | Command | Needs |
 | --- | --- | --- |
-| **[mise](https://mise.jdx.dev/)** *(recommended)* | `mise use "github:mpyw/molint@0.1.0"` | Nothing. Installs the prebuilt binary |
+| **[mise](https://mise.jdx.dev/)** *(recommended)* | `mise use "github:mpyw/molint@0.2.0"` | Nothing. Installs the prebuilt binary |
 | `go tool` | `go get -tool github.com/mpyw/molint/cmd/molint@latest` | Go 1.27+ |
 | `go install` | `go install github.com/mpyw/molint/cmd/molint@latest` | Go 1.27+ |
 | Release archive | See below | Nothing |
@@ -69,7 +69,7 @@ molint ./...
 
 ```toml
 [tools]
-"github:mpyw/molint" = "0.1.0"
+"github:mpyw/molint" = "0.2.0"
 ```
 
 As a tool dependency in `go.mod`:
@@ -94,7 +94,7 @@ go run github.com/mpyw/molint/cmd/molint@latest ./...
 From a release archive, verified against the published checksums:
 
 ```bash
-VERSION=0.1.0
+VERSION=0.2.0
 curl -LO "https://github.com/mpyw/molint/releases/download/v${VERSION}/molint_${VERSION}_darwin_arm64.tar.gz"
 curl -LO "https://github.com/mpyw/molint/releases/download/v${VERSION}/checksums.txt"
 shasum -a 256 -c checksums.txt --ignore-missing
