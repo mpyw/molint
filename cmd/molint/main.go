@@ -4,6 +4,7 @@
 //
 //	molint [flags] [packages]   analyze
 //	molint skill install        install the authoring skill for an AI agent
+//	molint -V=full              print the release, as go vet -vettool asks
 package main
 
 import (
@@ -13,8 +14,9 @@ import (
 )
 
 func main() {
-	// Before the driver, which reads every non-flag argument as a package
-	// pattern.
+	// Both run before the driver. It reads every non-flag argument as a
+	// package pattern, and it registers its own -V only when none is.
 	skills.Intercept()
+	registerVersionFlag()
 	singlechecker.Main(molint.Analyzer)
 }

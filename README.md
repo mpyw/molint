@@ -60,6 +60,7 @@ molint reads the shape of signatures, and follows values only inside one functio
 
 ```bash
 molint ./...
+molint -V=full   # the release this binary was built from
 ```
 
 <details>
