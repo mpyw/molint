@@ -11,8 +11,10 @@ It reads the shape of signatures, and follows values only inside one function. I
 ## Architecture
 
 ```text
-analyzer.go              Analyzer, one flag per rule, ErrNoSSA
-cmd/molint/              singlechecker entry point
+analyzer.go              Analyzer, one flag per rule
+skills.go                Skills: the embedded skills/ directory
+skills/                  the agent skills, installed by `molint skill install`
+cmd/molint/              singlechecker entry point, the skill subcommand, and -V=full
 internal/                the rules: one flat package, one namespace per file
   run.go                 Run: every rule over the package, then the reports in order
   checker.go             the per-pass state, and reporting through the directives
@@ -135,6 +137,16 @@ A bare return that loads both results from followed variables is paired along ea
 | Report an implicit conversion to an interface where it is written | SSA gives it no position. It is reported where the converted value is used |
 | Report diagnostics as they are found | The signature rules run before the SSA rules, so reports came out of line order. They are sorted by position at the end of the pass |
 
+## The command
+
+| Decision | Why |
+| --- | --- |
+| `-V=full` is registered before the driver | x/tools registers a `-V` that prints `devel` for every binary, but only when no `-V` is registered yet. `go vet -vettool` reads the line to identify the tool |
+| A release stamps its version with `-X main.version` | goreleaser builds every platform into `dist/` in one checkout. Each build after the first sees untracked files, so the module version the go command records reads `+dirty` |
+| `versionFlag` takes its output, its exit and the executable as fields | The tests reach every branch in one process. The coverage floor leaves no room for code that only a subprocess runs |
+| `init` intercepts `molint skill` and registers `-V` | The test binary runs `init` too, so both are covered. `main` only hands over to the driver |
+| No exported error for a pass without SSA | A driver runs `Requires` first, so only a hand-built `analysis.Pass` meets it. `internal.errRunWithoutSSA` stays as a guard |
+
 ## Testing
 
 ```bash
@@ -145,7 +157,7 @@ mise x -- ./test_all.sh  # tests, golangci-lint, declscope shrink, declscope, sp
 - `testdata/src/*` are analysistest packages, one or more per rule. `github.com/samber/mo` there is a stub, with bodies copied from v1.17.0.
 - `analyzer_test.go` runs the default flags, `-return-error`, and `-return-bool=false`. It runs a package again after restoring a flag, to prove that flags are read on each run. No test may call `t.Parallel`, since the flags are global.
 - A directive without a reason cannot be pinned in a fixture: the expectation comment on its line would be read as the reason. `internal/directive` tests it.
-- **Coverage is held at 99.5% of statements** (`coverage.sh`). The only statement left is `main`. Code no input reaches is deleted, not excluded.
+- **Coverage is held at 99.5% of statements** (`coverage.sh`). The only statements left are in `main`, which hands over to the driver. Code no input reaches is deleted, not excluded.
 
 ### Formal specs
 

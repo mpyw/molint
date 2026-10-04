@@ -22,7 +22,11 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w
+      # -V=full answers with the release, not with x/tools' "devel", and an
+      # installed skill names the same release. The module version the go
+      # command records reads +dirty here, since every build after the first
+      # sees the earlier ones in dist/.
+      - -s -w -X main.version={{ .Version }}
 
 archives:
   - id: default

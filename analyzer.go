@@ -20,22 +20,18 @@ var Analyzer = &analysis.Analyzer{
 	Doc:      "enforces the use of github.com/samber/mo",
 	URL:      "https://github.com/mpyw/molint",
 	Requires: []*analysis.Analyzer{buildssa.Analyzer},
-	Run:      run,
+	Run:      runAnalyzer,
 }
 
-// ErrNoSSA is returned when the pass carries no buildssa result, which means
-// the analyzer was registered without its requirement.
-var ErrNoSSA = internal.ErrRunWithoutSSA
-
-// on holds the flag of each rule.
-var on = make(map[rule.Name]*bool)
+// analyzerFlagOf holds the flag of each rule.
+var analyzerFlagOf = make(map[rule.Name]*bool)
 
 func init() {
 	for _, r := range rule.All {
-		on[r] = Analyzer.Flags.Bool(string(r), rule.OnByDefault(r), "report "+string(r))
+		analyzerFlagOf[r] = Analyzer.Flags.Bool(string(r), rule.OnByDefault(r), "report "+string(r))
 	}
 }
 
-func run(pass *analysis.Pass) (any, error) {
-	return internal.Run(pass, internal.Config{On: func(r rule.Name) bool { return *on[r] }})
+func runAnalyzer(pass *analysis.Pass) (any, error) {
+	return internal.Run(pass, internal.Config{On: func(r rule.Name) bool { return *analyzerFlagOf[r] }})
 }
