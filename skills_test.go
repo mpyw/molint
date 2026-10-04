@@ -3,6 +3,7 @@ package molint_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -57,5 +58,33 @@ func TestSkillsEmbedEverySkill(t *testing.T) {
 	}
 	if got := molint.Skills.Len(); got != len(paths) {
 		t.Errorf("%d skills embedded, %d under skills/", got, len(paths))
+	}
+}
+
+// TestSkillsNameTheReleaseTheReadmeInstalls keeps each skill's "Written
+// against" line on the release the README tells a reader to install. A
+// release bumps both, and this catches the one forgotten.
+func TestSkillsNameTheReleaseTheReadmeInstalls(t *testing.T) {
+	readme, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`github:mpyw/molint@([0-9.]+)`).FindSubmatch(readme)
+	if m == nil {
+		t.Fatal("README.md names no release to install")
+	}
+	want := "Written against **molint " + string(m[1]) + "**."
+	paths, err := filepath.Glob(filepath.Join("skills", "*", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), want) {
+			t.Errorf("%s does not say %q", path, want)
+		}
 	}
 }
