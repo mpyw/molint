@@ -17,6 +17,7 @@ func TestAnalyzer(t *testing.T) {
 		"returnnilpair",
 		"returnbool",
 		"returnerroroff",
+		"fieldniloff",
 		"implementing",
 		"implementingtest",
 		"wrapnil",
@@ -37,6 +38,17 @@ func TestReturnError(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), molint.Analyzer, "returnerroroff")
 }
 
+func TestFieldNil(t *testing.T) {
+	restoreStore := setFlag(t, "field-nil-store", "true")
+	restoreCompare := setFlag(t, "field-nil-compare", "true")
+	analysistest.Run(t, analysistest.TestData(), molint.Analyzer, "fieldnilstore", "fieldnilcompare")
+	restoreStore()
+	restoreCompare()
+	// With the flags back to their defaults, the same kinds of code report
+	// nothing.
+	analysistest.Run(t, analysistest.TestData(), molint.Analyzer, "fieldniloff")
+}
+
 // TestReturnBoolOff runs with the default flags, then with return-bool off,
 // then with the default again, to prove that the flags are read on each run
 // rather than once.
@@ -51,13 +63,15 @@ func TestReturnBoolOff(t *testing.T) {
 // TestFlags pins the name and the default of each rule's flag.
 func TestFlags(t *testing.T) {
 	defaults := map[string]string{
-		"return-nil":     "true",
-		"return-bool":    "true",
-		"return-error":   "false",
-		"wrap-nil":       "true",
-		"result-zero":    "true",
-		"unwrap-nil":     "true",
-		"unwrap-discard": "true",
+		"return-nil":        "true",
+		"return-bool":       "true",
+		"return-error":      "false",
+		"field-nil-store":   "false",
+		"field-nil-compare": "false",
+		"wrap-nil":          "true",
+		"result-zero":       "true",
+		"unwrap-nil":        "true",
+		"unwrap-discard":    "true",
 	}
 	for name, want := range defaults {
 		f := molint.Analyzer.Flags.Lookup(name)

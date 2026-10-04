@@ -15,6 +15,10 @@ const (
 	// ReturnError reports a signature that ends in an error after other
 	// results.
 	ReturnError Name = "return-error"
+	// FieldNilStore reports nil stored into a pointer field.
+	FieldNilStore Name = "field-nil-store"
+	// FieldNilCompare reports a pointer field compared with nil.
+	FieldNilCompare Name = "field-nil-compare"
 	// WrapNil reports nil given to mo.Some, mo.Ok or mo.Err.
 	WrapNil Name = "wrap-nil"
 	// ResultZero reports a use of a zero mo.Result.
@@ -27,12 +31,19 @@ const (
 )
 
 // All lists every rule, in the order the documentation gives them.
-var All = []Name{ReturnNil, ReturnBool, ReturnError, WrapNil, ResultZero, UnwrapNil, UnwrapDiscard}
+var All = []Name{ReturnNil, ReturnBool, ReturnError, FieldNilStore, FieldNilCompare, WrapNil, ResultZero, UnwrapNil, UnwrapDiscard}
 
 // OnByDefault reports whether a rule is on when no flag says otherwise.
 // return-error is for those who want mo.Result everywhere, so it is off.
+// field-nil-store misses every field left out of a composite literal unless
+// exhaustruct runs beside it, so it is off. field-nil-compare also reports
+// a field set on first use and a check made just in case, so it is off.
 func OnByDefault(n Name) bool {
-	return n != ReturnError
+	switch n {
+	case ReturnError, FieldNilStore, FieldNilCompare:
+		return false
+	}
+	return true
 }
 
 // Known reports whether s names a rule.

@@ -9,6 +9,7 @@ molint enforces the use of [samber/mo](https://github.com/samber/mo). It reads t
 | Group | Rules | What it enforces |
 | --- | --- | --- |
 | Shape of results | `return-nil`, `return-bool`, `return-error` | Absence and failure are `mo.Option` and `mo.Result`, not a nil pointer, a trailing `bool`, or a trailing `error` |
+| Shape of fields | `field-nil-store`, `field-nil-compare` | Absence in a field is `mo.Option`, not a nil pointer |
 | Use of mo | `wrap-nil`, `result-zero`, `unwrap-nil`, `unwrap-discard` | An `Option` or a `Result` never holds or gives a nil it should not |
 
 The principle behind the lines: absence must not be dropped silently. A trailing `bool` and a discarded `ok` drop it silently, whatever the type. `OrEmpty` and `OrElse` choose a default in plain sight, which is fine unless the default is nil.
@@ -27,7 +28,7 @@ Nothing is reported in a generated file. Test files are checked like any other f
 
 ## Nil values
 
-`return-nil`, `wrap-nil` and `unwrap-nil` report a value that is nil on some path to that point. The branches on the way are taken as independent: only a nil check of the value itself narrows the paths. Only these count:
+`return-nil`, `field-nil-store`, `wrap-nil` and `unwrap-nil` report a value that is nil on some path to that point. The branches on the way are taken as independent: only a nil check of the value itself narrows the paths. Only these count:
 
 | Value | Example |
 | --- | --- |
@@ -132,6 +133,59 @@ The same as `return-bool`, with `error` in place of `bool`. It is off unless `-r
 
 Message: `F reports failure with a trailing error; return mo.Result[T] instead [return-error]`. With several values, `mo.Result of a struct, or of lo.TupleN`.
 
+## `field-nil-store`
+
+A nil value must not be stored into a pointer field. It is off unless `-field-nil-store` is set.
+
+> [!IMPORTANT]
+> Turn it on together with [exhaustruct](https://github.com/GaijinEntertainment/go-exhaustruct). Without it, a field left out of a composite literal hides a nil from this rule.
+
+A field counts when all of these hold:
+
+- its type is a pointer;
+- it is not embedded, since `mo.Option` would lose the promoted fields and methods;
+- it is declared in the package, in a file that is not generated. A field of an anonymous struct counts too.
+
+A store counts wherever it is written:
+
+| Write | Example |
+| --- | --- |
+| A keyed element of a composite literal | `S{F: nil}`, `&S{F: nil}` |
+| A positional element of a composite literal | `S{1, nil}` |
+| An assignment to the field | `s.F = nil`, `p.F = nil`, `s.Inner.F = nil` |
+
+The value is judged as [Nil values](#nil-values) says. So `var p *T; if c { p = x }; s.F = p` is reported. `if p == nil { p = def }; s.F = p` is not.
+
+A field left out of a composite literal is not followed. SSA emits no store for it, since the new struct is already zero. The exhaustruct linter makes every field written. Then `S{A: 1}` becomes `S{A: 1, F: nil}`, and `field-nil-store` reports that.
+
+> [!NOTE]
+> A struct filled after it is built is reported too. `s := S{A: 1, F: nil}; s.F = x` reports the nil in the literal. Compute `x` first, then build `S` with it.
+
+A field whose type points back to its own struct, as in `type Node struct { Next *Node }`, is not exempt. `mo.Option[Node]` would be an invalid recursive type, so the message suggests `mo.Option[*Node]`, as `return-nil` does.
+
+Message: `S.F is set to nil; make it mo.Option[*T] [field-nil-store]`. The struct is spelled as in [Names and types in messages](#names-and-types-in-messages), as in `Box[E].F`. A field of an anonymous struct is spelled by its name alone, as `F`.
+
+## `field-nil-compare`
+
+A pointer field must not be compared with nil. A nil check says the field may be absent, so the field should be an `mo.Option`. It is off unless `-field-nil-compare` is set.
+
+A field counts as for [`field-nil-store`](#field-nil-store). This rule does not need exhaustruct. It also finds a field that only a decoder such as `json.Unmarshal` leaves nil.
+
+| Comparison | Reported |
+| --- | --- |
+| `s.F == nil`, `p.F != nil`, `nil == s.F` | Yes |
+| `switch s.F { case nil: }` | Yes |
+| `v := s.F; if v == nil {}` | Yes. A local variable SSA lifts is the field read itself |
+| `v := s.F; if c { v = x }; if v == nil {}` | No. The value is a φ, not the field read |
+| A field of a struct declared in another package | No |
+
+A comparison counts when one operand is the constant nil and the other is a read of the field. A read is a `Field`, or a load through a `FieldAddr`, seen through any `ChangeType`.
+
+> [!NOTE]
+> A field set on first use is reported too, as in `if c.client == nil { c.client = dial() }`. It is absent until then. Use `sync.OnceValue`, or make it an `mo.Option`.
+
+Message: `S.F is compared with nil; make it mo.Option[*T] [field-nil-compare]`. The field is spelled as for `field-nil-store`.
+
 ## `wrap-nil`
 
 A nil value must not be passed to these constructors of mo:
@@ -169,7 +223,7 @@ A use is reported: a return, an argument, a conversion to an interface, a store,
 
 A comparison with the zero constant on the way stops a zero, as a nil check does. So `if r == (mo.Result[int]{}) { r = mo.Err[int](e) }; return r` is not reported.
 
-A zero `Result` written into a field or an element, as in `Holder{R: mo.Result[int]{}}`, is a store and is reported. A field left out of a composite literal, as in `Holder{}`, is not followed.
+A zero `Result` written into a field or an element, as in `Holder{R: mo.Result[int]{}}`, is a store and is reported. A field left out of a composite literal, as in `Holder{}`, is not followed. exhaustruct makes it written, as for [`field-nil-store`](#field-nil-store).
 
 Message: `a zero mo.Result[T] is Ok with a zero value; build it with mo.Ok or mo.Err [result-zero]`.
 
@@ -219,6 +273,8 @@ A package with tests is checked twice: alone, and with its test files. The rule 
 | Report | Position |
 | --- | --- |
 | `return-nil`, `result-zero` at a return | The `return` keyword, also for a return inside a range-over-func body |
+| `field-nil-store` | The colon of a keyed element. The value of a positional element. The field's name in an assignment |
+| `field-nil-compare` | The operator of the comparison. The `nil` of a `case nil` |
 | A rule about a call | The opening parenthesis of the call. A trailing ignore goes on that line, which is the first line of a call that spans several |
 | `return-bool`, `return-error` | The name of the declaration |
 | `result-zero` at a store, a send, or a map update | The statement |
@@ -242,12 +298,12 @@ A directive in a generated file is not read. An ignore without a reason is repor
 
 ## Flags
 
-Each rule has a boolean flag of its name. Every rule is on by default, except `return-error`.
+Each rule has a boolean flag of its name. Every rule is on by default, except `return-error`, `field-nil-store` and `field-nil-compare`.
 
 ```bash
-molint ./...                     # every rule except return-error
-molint -return-error ./...       # every rule
-molint -return-bool=false ./...  # every rule except return-bool and return-error
+molint ./...                                     # every rule except return-error, field-nil-store and field-nil-compare
+molint -field-nil-store -field-nil-compare ./... # every rule except return-error
+molint -return-bool=false ./...                  # every rule on by default, except return-bool
 ```
 
 ## Gaps
@@ -258,7 +314,11 @@ molint -return-bool=false ./...  # every rule except return-bool and return-erro
 | Branches whose conditions depend on each other, as in `if c { p = x }; if c { return p }` | Branches are taken as independent, so this is reported although no run returns nil. The same holds for a nil check that can never succeed |
 | A nil check, or a comparison with the zero `Result`, on a variable that SSA does not lift. `if p == nil { p = def }` on a captured `p`, or on a named result in a function with a `defer`, is one | A later load follows the stores that reach it. The check on an earlier load of the same variable is not carried over. A nil constant stored on an earlier path is then reported |
 | `mo.TupleToOption`, `mo.TupleToResult`, `mo.EmptyableToOption` | They check their arguments at run time |
-| A zero `Result` inside a struct | Fields are not followed |
+| A field left out of a composite literal, for `field-nil-store` and `result-zero` | SSA emits no store for it. exhaustruct makes it written |
+| A struct born zero outside a composite literal: `var s S`, `new(S)`, `make([]S, n)`, a map lookup that misses, or a decoder such as `json.Unmarshal` | Following each field until the struct is used needs definite assignment. molint gave that up with the non-nil contract. `field-nil-compare` still finds such a field where it is checked for nil |
+| A nil stored into a field of a struct declared in another package | Whether that file is generated is not known without facts, so generated code such as protobuf would be reported |
+| A zero struct stored as a whole, as in `*p = S{}` or `s.Inner = Inner{}` | Only stores into a pointer field itself are read. exhaustruct reports the literal |
+| The initializer of a package-level variable, as in `var s = S{P: nil}` | It runs in the package's initializer, which SSA builds as a synthetic function. No rule that reads SSA analyzes it |
 | A constructor or method of mo reached indirectly. That is through a parameter, a field, a method value (`f := o.OrEmpty; f()`), or a method expression (`mo.Option[*T].OrElse(o, nil)`) | They are called through a function value, a bound wrapper, or a thunk, which is not followed |
 | An error checked after the pointer and the error are set on separate branches. `switch { case a: u = x; default: err = e }` then `if err != nil { return nil, err }; return u, nil` is one | The check is on another value, so it does not narrow the pointer. This is reported. Return from each branch instead |
 | A retry loop that returns its last error. `for range 3 { if u, err = f(); err == nil { return u, nil } }` then `return nil, err` is one | The loop is taken as able to run no rounds, which leaves the error nil. Start the error at a sentinel instead |

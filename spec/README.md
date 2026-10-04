@@ -102,6 +102,8 @@ One more gap has no spec. A check on a loaded variable that SSA does not lift is
 | Range-over-func returns (`flow/range.go`) | `RangeReturns` picks the stores that carry a return statement's position. That is attribution of syntax to a return, not a path fact: a store has the position or it does not. `rangeBinding` reads a captured variable in the body as what reached the loop's closure. That holds when the body only loads the variable, which is the load-only-literal case `local_store.fsl` proves followed. A body that stores into it makes the variable one a literal stores into, which is not followed |
 | Directives | Set logic over the table in design/rules.md: a spec would restate it |
 | ChangeType | The rule and the run both see through it |
+| `field-nil-store` | It judges the stored value as a nil value, which `nil_value.fsl` and `local_store.fsl` prove. Which fields count is a question of types |
+| `field-nil-compare` | It matches one instruction: a comparison of a field read with the constant nil. No path is followed |
 
 ## Running them
 

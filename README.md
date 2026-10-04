@@ -53,7 +53,7 @@ molint reads the shape of signatures, and follows values only inside one functio
 
 | Method | Command | Needs |
 | --- | --- | --- |
-| **[mise](https://mise.jdx.dev/)** *(recommended)* | `mise use "github:mpyw/molint@0.1.0"` | Nothing. Installs the prebuilt binary |
+| **[mise](https://mise.jdx.dev/)** *(recommended)* | `mise use "github:mpyw/molint@0.2.0"` | Nothing. Installs the prebuilt binary |
 | `go tool` | `go get -tool github.com/mpyw/molint/cmd/molint@latest` | Go 1.27+ |
 | `go install` | `go install github.com/mpyw/molint/cmd/molint@latest` | Go 1.27+ |
 | Release archive | See below | Nothing |
@@ -69,7 +69,7 @@ molint ./...
 
 ```toml
 [tools]
-"github:mpyw/molint" = "0.1.0"
+"github:mpyw/molint" = "0.2.0"
 ```
 
 As a tool dependency in `go.mod`:
@@ -94,7 +94,7 @@ go run github.com/mpyw/molint/cmd/molint@latest ./...
 From a release archive, verified against the published checksums:
 
 ```bash
-VERSION=0.1.0
+VERSION=0.2.0
 curl -LO "https://github.com/mpyw/molint/releases/download/v${VERSION}/molint_${VERSION}_darwin_arm64.tar.gz"
 curl -LO "https://github.com/mpyw/molint/releases/download/v${VERSION}/checksums.txt"
 shasum -a 256 -c checksums.txt --ignore-missing
@@ -110,6 +110,8 @@ tar xzf "molint_${VERSION}_darwin_arm64.tar.gz"
 | [`return-nil`](#return-nil) | 🟢 On | A nil pointer result<br>→ Use [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) instead |
 | [`return-bool`](#return-bool) | 🟢 On | A signature that ends in a `bool` after other results<br>→ Use [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) instead |
 | [`return-error`](#return-error) | 🔴 Off | A signature that ends in an `error` after other results<br>→ Use [`mo.Result`](https://pkg.go.dev/github.com/samber/mo#Result) instead |
+| [`field-nil-store`](#field-nil-store) | 🔴 Off | nil stored into a pointer field<br>→ Make the field [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) |
+| [`field-nil-compare`](#field-nil-compare) | 🔴 Off | A pointer field compared with nil<br>→ Make the field [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) |
 | [`wrap-nil`](#wrap-nil) | 🟢 On | nil given to [`mo.Some`](https://pkg.go.dev/github.com/samber/mo#Some), [`mo.Ok`](https://pkg.go.dev/github.com/samber/mo#Ok), or [`mo.Err`](https://pkg.go.dev/github.com/samber/mo#Err)<br>→ Use [`mo.None`](https://pkg.go.dev/github.com/samber/mo#None), or pass a non-nil value |
 | [`result-zero`](#result-zero) | 🟢 On | A zero [`mo.Result`](https://pkg.go.dev/github.com/samber/mo#Result)<br>→ Build it with [`mo.Ok`](https://pkg.go.dev/github.com/samber/mo#Ok) or [`mo.Err`](https://pkg.go.dev/github.com/samber/mo#Err) |
 | [`unwrap-nil`](#unwrap-nil) | 🟢 On | [`OrEmpty`](https://pkg.go.dev/github.com/samber/mo#Option.OrEmpty), or [`OrElse(nil)`](https://pkg.go.dev/github.com/samber/mo#Option.OrElse), where the nil breaks on use:<br>pointer, interface, `map`, `func` or `chan`<br>→ Use [`Get`](https://pkg.go.dev/github.com/samber/mo#Option.Get) and check `ok`, or give [`OrElse`](https://pkg.go.dev/github.com/samber/mo#Option.OrElse) a non-nil value |
@@ -120,8 +122,8 @@ The line between them: absence must not be dropped silently. A trailing `bool` a
 Each rule has a flag of its name:
 
 ```bash
-molint -return-error ./...         # every rule
-molint -return-bool=false ./...    # every rule except return-bool and return-error
+molint -return-error -field-nil-store -field-nil-compare ./...  # every rule
+molint -return-bool=false ./...                                 # every rule on by default, except return-bool
 ```
 
 Nothing is reported in a generated file. Test files are checked like any other file.
@@ -392,6 +394,166 @@ func Close() error
 func Find() mo.Result[User]
 func Load() mo.Result[lo.Tuple2[Config, Meta]]
 ```
+
+### `field-nil-store`
+
+A nil must not be stored into a pointer field. It is off unless `-field-nil-store` is set.
+
+> [!IMPORTANT]
+> Turn it on together with [exhaustruct](https://github.com/GaijinEntertainment/go-exhaustruct). A field left out of a composite literal is not seen by molint. exhaustruct makes you write it, as in `F: nil`, and then molint reports it.
+
+<table>
+<thead>
+<tr><th>Code</th><th>Valid?</th><th>Reason</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>
+
+```go
+u := User{Name: n, Manager: nil}
+```
+
+</td>
+<td>❌</td>
+<td>The field holds nil, so it may be absent</td>
+</tr>
+<tr>
+<td>
+
+```go
+u.Manager = nil
+```
+
+</td>
+<td>❌</td>
+<td>The same, in an assignment</td>
+</tr>
+<tr>
+<td>
+
+```go
+var m *User
+if ok {
+	m = x
+}
+u.Manager = m
+```
+
+</td>
+<td>❌</td>
+<td><code>m</code> is nil when <code>ok</code> is false</td>
+</tr>
+<tr>
+<td>
+
+```go
+u.Manager = find(id)
+```
+
+</td>
+<td>⚠️</td>
+<td>Not reported by this rule, since a call's result is not followed. If <code>find</code> returns nil, <a href="#return-nil"><code>return-nil</code></a> reports it there</td>
+</tr>
+</tbody>
+</table>
+
+Only fields declared in the package count. An embedded field and a field in a generated file do not.
+
+#### Fix
+
+```go
+type User struct {
+	Name    string
+	Manager mo.Option[*User]
+}
+
+u := User{Name: n, Manager: mo.None[*User]()}
+```
+
+> [!NOTE]
+> A struct filled after it is built is reported too. `u := User{Name: n, Manager: nil}; u.Manager = m` reports the literal. Compute `m` first, then build `User` with it.
+
+### `field-nil-compare`
+
+A pointer field must not be compared with nil. A nil check says the field may be absent. It is off unless `-field-nil-compare` is set.
+
+<table>
+<thead>
+<tr><th>Code</th><th>Valid?</th><th>Reason</th></tr>
+</thead>
+<tbody>
+<tr>
+<td>
+
+```go
+if req.Name != nil {
+	user.Name = *req.Name
+}
+```
+
+</td>
+<td>❌</td>
+<td>The field may be absent</td>
+</tr>
+<tr>
+<td>
+
+```go
+switch u.Manager {
+case nil:
+	return guest
+}
+```
+
+</td>
+<td>❌</td>
+<td>The same</td>
+</tr>
+<tr>
+<td>
+
+```go
+if c.client == nil {
+	c.client = dial()
+}
+```
+
+</td>
+<td>❌</td>
+<td>The field is absent until its first use</td>
+</tr>
+<tr>
+<td>
+
+```go
+if u.Manager == boss {
+	notify(u)
+}
+```
+
+</td>
+<td>✅</td>
+<td>It is not compared with nil</td>
+</tr>
+</tbody>
+</table>
+
+It does not need exhaustruct. It also finds a field that only a decoder such as `json.Unmarshal` leaves nil. The fields that count are the same as for [`field-nil-store`](#field-nil-store).
+
+#### Fix
+
+```go
+type UpdateRequest struct {
+	Name mo.Option[string] `json:"name"`
+}
+
+if name, ok := req.Name.Get(); ok {
+	user.Name = name
+}
+```
+
+For a field set on first use, use [`sync.OnceValue`](https://pkg.go.dev/sync#OnceValue), or make it an [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option).
 
 ### `wrap-nil`
 
@@ -701,7 +863,10 @@ These are not checked:
 | --- | --- |
 | A nil from a parameter, a field, or a call | Values are followed only inside one function. [uber-go/nilaway](https://github.com/uber-go/nilaway) follows them further |
 | [`mo.TupleToOption`](https://pkg.go.dev/github.com/samber/mo#TupleToOption), [`mo.TupleToResult`](https://pkg.go.dev/github.com/samber/mo#TupleToResult), [`mo.EmptyableToOption`](https://pkg.go.dev/github.com/samber/mo#EmptyableToOption) | They check their arguments at run time |
-| A zero [`mo.Result`](https://pkg.go.dev/github.com/samber/mo#Result) left out of a composite literal, as in `Holder{}` | Fields are not followed |
+| A field left out of a composite literal, as in `Holder{}` | SSA has no store for it. Run [exhaustruct](https://github.com/GaijinEntertainment/go-exhaustruct) to make every field written |
+| A struct made zero by `var s S`, `new(S)`, or a decoder | Fields are not followed. [`field-nil-compare`](#field-nil-compare) still finds a field checked for nil |
+| A field of a struct declared in another package | molint cannot tell whether that package's file is generated |
+| The initializer of a package-level variable | No rule reads the package's initializer |
 | A constructor or method of mo passed as a function value | Calls through function values are not followed |
 
 These are reported although no run returns nil, since branches are taken as independent:
