@@ -83,6 +83,11 @@ func NamedPointer(n Named) bool {
 	return n.P == nil // want `^Named\.P is compared with nil; make it mo\.Option\[Ptr\] \[field-nil-compare\]$`
 }
 
+// A conversion between pointer types is seen through.
+func Converted(s *S) bool {
+	return Ptr(s.P) == nil // want `^S\.P is compared with nil; make it mo\.Option\[\*T\] \[field-nil-compare\]$`
+}
+
 type Box[E any] struct {
 	V *E
 }

@@ -83,10 +83,8 @@ func (c *checker) fieldNilTarget(t types.Type, i int) (*types.Var, string) {
 	if p, ok := t.Underlying().(*types.Pointer); ok {
 		t = p.Elem()
 	}
-	st, ok := t.Underlying().(*types.Struct)
-	if !ok {
-		return nil, ""
-	}
+	// Go selects no field through a type parameter, so t is always a struct.
+	st := t.Underlying().(*types.Struct)
 	f := st.Field(i).Origin()
 	if f.Embedded() || !typeutil.IsPointer(f.Type()) || f.Pkg() != c.pass.Pkg || c.inGenerated(f.Pos()) {
 		return nil, ""
