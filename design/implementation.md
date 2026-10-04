@@ -53,9 +53,8 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 
 | Rule | Why |
 | --- | --- |
-| No `//declscope:core` under `internal/` | A core file hides its names from the naming rule |
+| No `//declscope:core` | A core file hides its names from the naming rule |
 | A rule's entry point is `//declscope:package`, with the file that calls it | `run.go` and `calls.go` call into each rule's file |
-| `analyzer.go` is `//declscope:core` | It is the root package's own file. `skills.go` is a second namespace, which would otherwise make `on` and `run` carry `analyzer` |
 | `flow` is split by concept: `site.go`, `tracer.go`, `store.go`, `return.go`, `range.go`, `pair.go` | Each name carries its file's concept, as `SiteAt`, `NilTracer`, `storesReaching`, `RangeReturns`. One file would have made every name carry `flow` |
 | `nilcheck.Unknown`, `typeutil.TrailingNone` and `typeutil.Option` stay exported with no ignore | No other package names them, but each enum is incomplete without them. Since declscope 0.18.0, `shrink` judges a `const` block of one type as one set, so the other values keep them exported |
 

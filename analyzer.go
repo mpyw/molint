@@ -4,8 +4,6 @@
 // pointer, a trailing bool, or a trailing error. An Option or a Result must
 // not hold or give a nil it should not. The rules are listed in
 // design/rules.md, and each has a flag of its name.
-//
-//declscope:core
 package molint
 
 import (
@@ -22,18 +20,18 @@ var Analyzer = &analysis.Analyzer{
 	Doc:      "enforces the use of github.com/samber/mo",
 	URL:      "https://github.com/mpyw/molint",
 	Requires: []*analysis.Analyzer{buildssa.Analyzer},
-	Run:      run,
+	Run:      runAnalyzer,
 }
 
-// on holds the flag of each rule.
-var on = make(map[rule.Name]*bool)
+// analyzerFlagOf holds the flag of each rule.
+var analyzerFlagOf = make(map[rule.Name]*bool)
 
 func init() {
 	for _, r := range rule.All {
-		on[r] = Analyzer.Flags.Bool(string(r), rule.OnByDefault(r), "report "+string(r))
+		analyzerFlagOf[r] = Analyzer.Flags.Bool(string(r), rule.OnByDefault(r), "report "+string(r))
 	}
 }
 
-func run(pass *analysis.Pass) (any, error) {
-	return internal.Run(pass, internal.Config{On: func(r rule.Name) bool { return *on[r] }})
+func runAnalyzer(pass *analysis.Pass) (any, error) {
+	return internal.Run(pass, internal.Config{On: func(r rule.Name) bool { return *analyzerFlagOf[r] }})
 }
