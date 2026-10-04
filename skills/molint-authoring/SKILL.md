@@ -6,6 +6,8 @@ license: MIT
 
 # Writing code under molint
 
+Written against **molint 0.2.0**. Check the version first with `molint -V=full`: this describes how that release behaves, not how an older one does.
+
 molint enforces [samber/mo](https://github.com/samber/mo). Absence is `mo.Option`, not a nil pointer or a trailing `bool`. Failure may be `mo.Result`, not a trailing `error`. An `Option` or a `Result` never holds or gives a nil it should not.
 
 The full specification is `design/rules.md` in the molint repository. This skill says how to write code that satisfies it.
