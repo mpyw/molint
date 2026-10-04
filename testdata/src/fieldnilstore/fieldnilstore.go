@@ -178,8 +178,40 @@ func LocalType() any {
 	return L{P: nil} // want `^L\.P is set to nil; make it mo\.Option\[\*T\] \[field-nil-store\]$`
 }
 
+type Double struct {
+	PP **T
+}
+
+// A pointer to a pointer is a pointer.
+func DoublePointer(d *Double) {
+	d.PP = nil // want `^Double\.PP is set to nil; make it mo\.Option\[\*\*T\] \[field-nil-store\]$`
+}
+
+// Not reported: the store is into what the field points to, not the field.
+func ThroughDoublePointer(d *Double) {
+	*d.PP = nil
+}
+
+// A store through a pointer to a pointer to the struct dereferences it
+// first, so the field is still read from a pointer to the struct.
+func DoublePointerToStruct(pp **S) {
+	(*pp).P = nil // want `^S\.P is set to nil; make it mo\.Option\[\*T\] \[field-nil-store\]$`
+}
+
 type EmbedsPointer struct {
 	*S
+}
+
+// A field promoted through an embedded pointer is the field of S.
+func PromotedThroughPointer(e EmbedsPointer) {
+	e.P = nil // want `^S\.P is set to nil; make it mo\.Option\[\*T\] \[field-nil-store\]$`
+}
+
+type PS *S
+
+// A named pointer to the struct selects its fields too.
+func NamedPointerToStruct(p PS) {
+	p.P = nil // want `^S\.P is set to nil; make it mo\.Option\[\*T\] \[field-nil-store\]$`
 }
 
 // Not reported: an embedded field is not looked at.

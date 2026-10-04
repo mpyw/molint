@@ -126,8 +126,37 @@ func Interface(s *S) bool {
 
 // ===== Which fields count =====
 
+type Double struct {
+	PP **T
+}
+
+// A pointer to a pointer is a pointer.
+func DoublePointer(d Double) bool {
+	return d.PP == nil // want `^Double\.PP is compared with nil; make it mo\.Option\[\*\*T\] \[field-nil-compare\]$`
+}
+
+// Not reported: what the field points to is compared, not the field.
+func ThroughDoublePointer(d Double) bool {
+	return *d.PP == nil
+}
+
+func DoublePointerToStruct(pp **S) bool {
+	return (*pp).P == nil // want `^S\.P is compared with nil; make it mo\.Option\[\*T\] \[field-nil-compare\]$`
+}
+
 type EmbedsPointer struct {
 	*S
+}
+
+// A field promoted through an embedded pointer is the field of S.
+func PromotedThroughPointer(e EmbedsPointer) bool {
+	return e.P == nil // want `^S\.P is compared with nil; make it mo\.Option\[\*T\] \[field-nil-compare\]$`
+}
+
+type PS *S
+
+func NamedPointerToStruct(p PS) bool {
+	return p.P == nil // want `^S\.P is compared with nil; make it mo\.Option\[\*T\] \[field-nil-compare\]$`
 }
 
 // Not reported: an embedded field is not looked at.
