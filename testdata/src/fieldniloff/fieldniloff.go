@@ -1,6 +1,7 @@
 // Package fieldniloff has the same kinds of code as fieldnilstore and
-// fieldnilcompare, checked with the default flags: both rules are off, so
-// nothing is reported.
+// fieldnilcompare, checked with field-nil-store turned off and
+// field-nil-compare at its default: both rules are off, so nothing is
+// reported.
 package fieldniloff
 
 type T struct{ N int }

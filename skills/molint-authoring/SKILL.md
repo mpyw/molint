@@ -6,7 +6,7 @@ license: MIT
 
 # Writing code under molint
 
-Written against **molint 0.2.0**. Check the version first with `molint -V=full`: this describes how that release behaves, not how an older one does.
+Written against **molint 0.3.0**. Check the version first with `molint -V=full`: this describes how that release behaves, not how an older one does.
 
 molint enforces [samber/mo](https://github.com/samber/mo). Absence is `mo.Option`, not a nil pointer or a trailing `bool`. Failure may be `mo.Result`, not a trailing `error`. An `Option` or a `Result` never holds or gives a nil it should not.
 
@@ -21,14 +21,14 @@ The full specification is `design/rules.md` in the molint repository. This skill
 | `return-nil` | On | A return that gives a nil pointer | Return `mo.Option` |
 | `return-bool` | On | A signature that ends in `bool` after other results | Return `mo.Option` |
 | `return-error` | Off | A signature that ends in `error` after other results | Return `mo.Result` |
-| `field-nil-store` | Off | nil stored into a pointer field | Make the field `mo.Option` |
+| `field-nil-store` | On | nil stored into a pointer field | Make the field `mo.Option` |
 | `field-nil-compare` | Off | A pointer field compared with nil | Make the field `mo.Option` |
 | `wrap-nil` | On | nil given to `mo.Some`, `mo.Ok` or `mo.Err` | Use `mo.None`, or a non-nil value |
 | `result-zero` | On | A zero `mo.Result` used | Build it with `mo.Ok` or `mo.Err` |
 | `unwrap-nil` | On | `OrEmpty`, or `OrElse(nil)`, where nil breaks on use | Use `Get` and check `ok`, or `OrElse` with a real default |
 | `unwrap-discard` | On | `Get` with its `ok` or its error discarded | Check it |
 
-**Check which rules are on before you trust a clean run.** Each rule has a flag of its name. Read how CI runs molint. `-return-error`, `-field-nil-store` and `-field-nil-compare` turn on the rules that are off by default. `-return-bool=false` turns one off.
+**Check which rules are on before you trust a clean run.** Each rule has a flag of its name. Read how CI runs molint. Through golangci-lint, the same names are keys under the molint plugin's `settings` in `.golangci.yml`. `-return-error` and `-field-nil-compare` turn on the rules that are off by default. `-return-bool=false` turns one off.
 
 molint follows values only inside one function. It does not look for nil panics. [nilaway](https://github.com/uber-go/nilaway) does that, and the two are meant to run together.
 
@@ -128,7 +128,7 @@ if m, ok := u.Manager.Get(); ok {
 > [!WARNING]
 > With `json:",omitzero"`, an `mo.Option` is left out when it is `None`. It is also left out when it holds a zero value, such as `mo.Some(0)` or `mo.Some("")`, since its `IsZero` reports the value's zero. Do not use `omitzero` where a present zero must be sent. `omitempty` never leaves out a struct, so it has no effect on an `mo.Option`.
 
-`field-nil-store` needs [exhaustruct](https://github.com/GaijinEntertainment/go-exhaustruct). A field left out of a composite literal has no store in SSA, so molint does not see it. exhaustruct makes every field written. Then a left-out pointer becomes `F: nil`, and molint reports it.
+`field-nil-store` sees every field only with [exhaustruct](https://github.com/GaijinEntertainment/go-exhaustruct). A field left out of a composite literal has no store in SSA, so molint does not see it. exhaustruct makes every field written. Then a left-out pointer becomes `F: nil`, and molint reports it. A clean run without exhaustruct does not mean no field is left nil.
 
 Only fields declared in the package count. An embedded field and a field in a generated file do not.
 

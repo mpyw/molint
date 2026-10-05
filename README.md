@@ -53,7 +53,7 @@ molint reads the shape of signatures, and follows values only inside one functio
 
 | Method | Command | Needs |
 | --- | --- | --- |
-| **[mise](https://mise.jdx.dev/)** *(recommended)* | `mise use "github:mpyw/molint@0.2.0"` | Nothing. Installs the prebuilt binary |
+| **[mise](https://mise.jdx.dev/)** *(recommended)* | `mise use "github:mpyw/molint@0.3.0"` | Nothing. Installs the prebuilt binary |
 | `go tool` | `go get -tool github.com/mpyw/molint/cmd/molint@latest` | Go 1.27+ |
 | `go install` | `go install github.com/mpyw/molint/cmd/molint@latest` | Go 1.27+ |
 | Release archive | See below | Nothing |
@@ -64,13 +64,13 @@ molint -V=full   # the release this binary was built from
 ```
 
 <details>
-<summary>Pin a version, run through <code>go vet</code>, or install from an archive</summary>
+<summary>Pin a version, run through <code>go vet</code> or golangci-lint, or install from an archive</summary>
 
 `mise use` pins the version in the project's `mise.toml`, so every checkout and CI run the same one. Add `-g` to install it for every project on your machine instead.
 
 ```toml
 [tools]
-"github:mpyw/molint" = "0.2.0"
+"github:mpyw/molint" = "0.3.0"
 ```
 
 As a tool dependency in `go.mod`:
@@ -95,11 +95,44 @@ go run github.com/mpyw/molint/cmd/molint@latest ./...
 From a release archive, verified against the published checksums:
 
 ```bash
-VERSION=0.2.0
+VERSION=0.3.0
 curl -LO "https://github.com/mpyw/molint/releases/download/v${VERSION}/molint_${VERSION}_darwin_arm64.tar.gz"
 curl -LO "https://github.com/mpyw/molint/releases/download/v${VERSION}/checksums.txt"
 shasum -a 256 -c checksums.txt --ignore-missing
 tar xzf "molint_${VERSION}_darwin_arm64.tar.gz"
+```
+
+Inside golangci-lint, as a [module plugin](https://golangci-lint.run/plugins/module-plugins/). molint is not bundled with golangci-lint, so build a binary that holds it. Write `.custom-gcl.yml`:
+
+```yaml
+version: v2.13.1  # the golangci-lint release to build
+plugins:
+  - module: github.com/mpyw/molint
+    import: github.com/mpyw/molint/plugin
+    version: v0.3.0
+```
+
+Turn it on in `.golangci.yml`. Each key under `settings` is a rule's name, as the flags take it. A rule left out keeps its default. An unknown name stops the run:
+
+```yaml
+version: "2"
+linters:
+  enable:
+    - molint
+  settings:
+    custom:
+      molint:
+        type: module
+        description: Enforces samber/mo.
+        settings:
+          field-nil-compare: true
+```
+
+Then build and run it:
+
+```bash
+golangci-lint custom  # writes ./custom-gcl
+./custom-gcl run ./...
 ```
 
 </details>
@@ -111,7 +144,7 @@ tar xzf "molint_${VERSION}_darwin_arm64.tar.gz"
 | [`return-nil`](#return-nil) | 🟢 On | A nil pointer result<br>→ Use [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) instead |
 | [`return-bool`](#return-bool) | 🟢 On | A signature that ends in a `bool` after other results<br>→ Use [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) instead |
 | [`return-error`](#return-error) | 🔴 Off | A signature that ends in an `error` after other results<br>→ Use [`mo.Result`](https://pkg.go.dev/github.com/samber/mo#Result) instead |
-| [`field-nil-store`](#field-nil-store) | 🔴 Off | nil stored into a pointer field<br>→ Make the field [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) |
+| [`field-nil-store`](#field-nil-store) | 🟢 On | nil stored into a pointer field<br>→ Make the field [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) |
 | [`field-nil-compare`](#field-nil-compare) | 🔴 Off | A pointer field compared with nil<br>→ Make the field [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) |
 | [`wrap-nil`](#wrap-nil) | 🟢 On | nil given to [`mo.Some`](https://pkg.go.dev/github.com/samber/mo#Some), [`mo.Ok`](https://pkg.go.dev/github.com/samber/mo#Ok), or [`mo.Err`](https://pkg.go.dev/github.com/samber/mo#Err)<br>→ Use [`mo.None`](https://pkg.go.dev/github.com/samber/mo#None), or pass a non-nil value |
 | [`result-zero`](#result-zero) | 🟢 On | A zero [`mo.Result`](https://pkg.go.dev/github.com/samber/mo#Result)<br>→ Build it with [`mo.Ok`](https://pkg.go.dev/github.com/samber/mo#Ok) or [`mo.Err`](https://pkg.go.dev/github.com/samber/mo#Err) |
@@ -123,8 +156,8 @@ The line between them: absence must not be dropped silently. A trailing `bool` a
 Each rule has a flag of its name:
 
 ```bash
-molint -return-error -field-nil-store -field-nil-compare ./...  # every rule
-molint -return-bool=false ./...                                 # every rule on by default, except return-bool
+molint -return-error -field-nil-compare ./...  # every rule
+molint -return-bool=false ./...                # every rule on by default, except return-bool
 ```
 
 Nothing is reported in a generated file. Test files are checked like any other file.
@@ -398,10 +431,10 @@ func Load() mo.Result[lo.Tuple2[Config, Meta]]
 
 ### `field-nil-store`
 
-A nil must not be stored into a pointer field. It is off unless `-field-nil-store` is set.
+A nil must not be stored into a pointer field.
 
 > [!IMPORTANT]
-> Turn it on together with [exhaustruct](https://github.com/GaijinEntertainment/go-exhaustruct). A field left out of a composite literal is not seen by molint. exhaustruct makes you write it, as in `F: nil`, and then molint reports it.
+> Run [exhaustruct](https://github.com/GaijinEntertainment/go-exhaustruct) beside it. A field left out of a composite literal is not seen by molint. exhaustruct makes you write it, as in `F: nil`, and then molint reports it. Without exhaustruct, the rule still reports every nil that is written.
 
 <table>
 <thead>

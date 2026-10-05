@@ -3,6 +3,7 @@ module github.com/mpyw/molint
 go 1.27.0
 
 require (
+	github.com/golangci/plugin-module-register v0.1.2
 	github.com/mpyw/go-skill-embed v0.2.1
 	golang.org/x/tools v0.50.0
 	gopkg.in/yaml.v3 v3.0.1
