@@ -35,12 +35,12 @@ var All = []Name{ReturnNil, ReturnBool, ReturnError, FieldNilStore, FieldNilComp
 
 // OnByDefault reports whether a rule is on when no flag says otherwise.
 // return-error is for those who want mo.Result everywhere, so it is off.
-// field-nil-store misses every field left out of a composite literal unless
-// exhaustruct runs beside it, so it is off. field-nil-compare also reports
-// a field set on first use and a check made just in case, so it is off.
+// field-nil-compare also reports a field set on first use and a check made
+// just in case, so it is off. field-nil-store is on: a nil written into a
+// field always says the field is absent there.
 func OnByDefault(n Name) bool {
 	switch n {
-	case ReturnError, FieldNilStore, FieldNilCompare:
+	case ReturnError, FieldNilCompare:
 		return false
 	}
 	return true

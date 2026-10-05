@@ -13,6 +13,7 @@ It reads the shape of signatures, and follows values only inside one function. I
 ```text
 analyzer.go              Analyzer, one flag per rule
 skills.go                Skills: the embedded skills/ directory
+plugin/                  the golangci-lint module plugin: the settings in place of the flags
 skills/                  the agent skills, installed by `molint skill install`
 cmd/molint/              singlechecker entry point, the skill subcommand, and -V=full
 internal/                the rules: one flat package, one namespace per file
@@ -47,6 +48,10 @@ Everything that stands alone has its own package:
 | `nilcheck` | Reads branches and dominators only |
 | `typeutil` | Type questions with no state |
 
+`plugin` builds its own copy of the analyzer from the settings, with the rules on that the settings say. Setting the flags of `molint.Analyzer` instead would be state shared by every run in the process. It lives in the main module, since `plugin-module-register` adds no dependency beyond `golang.org/x/tools`. A nested module would need a second tag per release, and would make `declscope shrink` stand down on `internal/`.
+
+`plugin` builds its own copy of the analyzer from the settings, with the rules on that the settings say. Setting the flags of `molint.Analyzer` instead would be state shared by every run in the process. It lives in the main module, since `plugin-module-register` adds no dependency beyond `golang.org/x/tools`.
+
 ### declscope
 
 The repository is checked by [declscope](https://github.com/mpyw/declscope) with `qualify: ondemand` and `exported: true` (`.declscope.yaml`). `declscope shrink` runs before the analyzer.
@@ -78,7 +83,7 @@ What this means for molint:
 
 - nilaway does not report code that follows molint's rules. It reads the `ok` of `Get` as a guard.
 - Where both report one cause, molint reports the cause and nilaway the dereference. Fixing it as molint says clears both.
-- A field that is never set is missed by both. molint gave up proving fields non-nil with the non-nil contract. `field-nil-store` with exhaustruct reports a nil written into a field, and `field-nil-compare` reports a field checked for nil. Both are off by default.
+- A field that is never set is missed by both. molint gave up proving fields non-nil with the non-nil contract. `field-nil-store` with exhaustruct reports a nil written into a field, and `field-nil-compare` reports a field checked for nil. Only `field-nil-store` is on by default.
 - nilaway does not know that `OrEmpty` gives nil for an empty Option. That is what `unwrap-nil` is for.
 
 The sample is small. Run both over a real application before relying on these rows.
@@ -121,7 +126,8 @@ A bare return that loads both results from followed variables is paired along ea
 | Both rules live in one file | They share which fields count and how a field is spelled |
 | Only fields declared in the package count | molint has no facts, so it cannot tell whether another package's file is generated. Protobuf and SDK structs are full of `*string` |
 | The field is taken from the generic type's origin | A diagnostic then spells `Box[E].V` with `*E` at every instance |
-| Both rules are off by default | `field-nil-store` misses every left-out field without exhaustruct. `field-nil-compare` reports a field set on first use and a check made just in case |
+| `field-nil-store` is on by default | A nil written into a field says the field is absent there, so each report is right. Without exhaustruct it misses left-out fields, but it reports nothing wrong |
+| `field-nil-compare` is off by default | A check says only that someone thought the field could be nil. It reports a field set on first use, and a check made just in case on a field that is never nil. There the fix is to delete the check, not to make the field an `mo.Option` |
 
 ## Rejected designs
 
@@ -155,7 +161,7 @@ mise x -- ./test_all.sh  # tests, golangci-lint, declscope shrink, declscope, sp
 ```
 
 - `testdata/src/*` are analysistest packages, one or more per rule. `github.com/samber/mo` there is a stub, with bodies copied from v1.17.0.
-- `analyzer_test.go` runs the default flags, `-return-error`, and `-return-bool=false`. It runs a package again after restoring a flag, to prove that flags are read on each run. No test may call `t.Parallel`, since the flags are global.
+- `analyzer_test.go` runs the default flags, `-return-error`, `-field-nil-compare`, `-return-bool=false`, and `-field-nil-store=false`. It runs a package again after restoring a flag, to prove that flags are read on each run. No test may call `t.Parallel`, since the flags are global.
 - A directive without a reason cannot be pinned in a fixture: the expectation comment on its line would be read as the reason. `internal/directive` tests it.
 - **Coverage is held at 99.5% of statements** (`coverage.sh`). The only statements left are in `main`, which hands over to the driver. Code no input reaches is deleted, not excluded.
 

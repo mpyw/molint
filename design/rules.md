@@ -136,10 +136,10 @@ Message: `F reports failure with a trailing error; return mo.Result[T] instead [
 
 ## `field-nil-store`
 
-A nil value must not be stored into a pointer field. It is off unless `-field-nil-store` is set.
+A nil value must not be stored into a pointer field.
 
 > [!IMPORTANT]
-> Turn it on together with [exhaustruct](https://github.com/GaijinEntertainment/go-exhaustruct). Without it, a field left out of a composite literal hides a nil from this rule.
+> Run [exhaustruct](https://github.com/GaijinEntertainment/go-exhaustruct) beside it. Without it, a field left out of a composite literal hides a nil from this rule. What the rule reports without it is still right. It only misses more.
 
 A field counts when all of these hold:
 
@@ -299,12 +299,12 @@ A directive in a generated file is not read. An ignore without a reason is repor
 
 ## Flags
 
-Each rule has a boolean flag of its name. Every rule is on by default, except `return-error`, `field-nil-store` and `field-nil-compare`.
+Each rule has a boolean flag of its name. Every rule is on by default, except `return-error` and `field-nil-compare`. The golangci-lint plugin takes the same names, as keys of its `settings`. A rule left out keeps its default, and an unknown name is an error.
 
 ```bash
-molint ./...                                     # every rule except return-error, field-nil-store and field-nil-compare
-molint -field-nil-store -field-nil-compare ./... # every rule except return-error
-molint -return-bool=false ./...                  # every rule on by default, except return-bool
+molint ./...                                  # every rule except return-error and field-nil-compare
+molint -return-error -field-nil-compare ./... # every rule
+molint -return-bool=false ./...               # every rule on by default, except return-bool
 ```
 
 ## Gaps

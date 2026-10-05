@@ -17,7 +17,6 @@ func TestAnalyzer(t *testing.T) {
 		"returnnilpair",
 		"returnbool",
 		"returnerroroff",
-		"fieldniloff",
 		"implementing",
 		"implementingtest",
 		"wrapnil",
@@ -38,15 +37,21 @@ func TestReturnError(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), molint.Analyzer, "returnerroroff")
 }
 
+// TestFieldNil runs field-nil-store, which is on by default, and
+// field-nil-compare, which is off. It then turns field-nil-store off, then
+// runs it again with the default, to prove that the flags are read on each
+// run.
 func TestFieldNil(t *testing.T) {
-	restoreStore := setFlag(t, "field-nil-store", "true")
+	analysistest.Run(t, analysistest.TestData(), molint.Analyzer, "fieldnilstore")
 	restoreCompare := setFlag(t, "field-nil-compare", "true")
-	analysistest.Run(t, analysistest.TestData(), molint.Analyzer, "fieldnilstore", "fieldnilcompare")
-	restoreStore()
+	analysistest.Run(t, analysistest.TestData(), molint.Analyzer, "fieldnilcompare")
 	restoreCompare()
-	// With the flags back to their defaults, the same kinds of code report
-	// nothing.
+	restoreStore := setFlag(t, "field-nil-store", "false")
+	// With field-nil-store off and field-nil-compare back to its default,
+	// the same kinds of code report nothing.
 	analysistest.Run(t, analysistest.TestData(), molint.Analyzer, "fieldniloff")
+	restoreStore()
+	analysistest.Run(t, analysistest.TestData(), molint.Analyzer, "fieldnilstore")
 }
 
 // TestReturnBoolOff runs with the default flags, then with return-bool off,
@@ -66,7 +71,7 @@ func TestFlags(t *testing.T) {
 		"return-nil":        "true",
 		"return-bool":       "true",
 		"return-error":      "false",
-		"field-nil-store":   "false",
+		"field-nil-store":   "true",
 		"field-nil-compare": "false",
 		"wrap-nil":          "true",
 		"result-zero":       "true",
