@@ -15,7 +15,7 @@ import (
 // function types. A function literal is not one of them, and neither is a
 // method that implements an interface.
 //
-//declscope:package // run.go calls it
+//declscope:shared // run.go calls it
 func (c *checker) checkShapes() {
 	info := c.pass.TypesInfo
 	for _, f := range c.pass.Files {

@@ -15,7 +15,7 @@ import (
 // function literal is exempt, but the body of a range-over-func loop is
 // not: its returns are returns of the function around the loop.
 //
-//declscope:package // run.go calls it
+//declscope:shared // run.go calls it
 func (c *checker) checkReturnNil(fn *ssa.Function) {
 	owner, rets := fn, []flow.Return(nil)
 	switch {

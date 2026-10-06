@@ -19,7 +19,7 @@ import (
 // once. A function literal that stores into a variable it captures makes a
 // use: the loads of that variable are no longer followed.
 //
-//declscope:package // run.go calls it
+//declscope:shared // run.go calls it
 func (c *checker) checkResultZero(fn *ssa.Function) {
 	zeros := flow.CheckingTracer(isResultZero)
 	check := func(v ssa.Value, pos token.Pos, at flow.Site) {

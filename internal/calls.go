@@ -9,7 +9,7 @@ import (
 // checkCalls runs the rules about calls into samber/mo on every static call
 // in fn: wrap-nil, unwrap-nil and unwrap-discard.
 //
-//declscope:package // run.go calls it
+//declscope:shared // run.go calls it
 func (c *checker) checkCalls(fn *ssa.Function) {
 	nils := flow.NilTracer()
 	for _, b := range fn.Blocks {
