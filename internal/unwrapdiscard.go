@@ -13,7 +13,7 @@ import (
 // used while its second result is discarded. A result is discarded when no
 // Extract of it exists, or its Extract has no referrer.
 //
-//declscope:package // calls.go calls it for each call
+//declscope:shared // calls.go calls it for each call
 func (c *checker) checkUnwrapDiscard(call *ssa.Call, callee *ssa.Function) {
 	m, name, _ := typeutil.MoMethod(callee)
 	if m == typeutil.NotMo || name != "Get" {

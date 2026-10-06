@@ -109,7 +109,7 @@ func rangeResultIndex(yield *ssa.Function) map[*ssa.FreeVar]int {
 // captures it. Nested bodies are followed out to the variable. It is nil
 // for any other captured variable.
 //
-//declscope:package // tracer.go follows a load in a body to it
+//declscope:shared // tracer.go follows a load in a body to it
 func rangeBinding(fv *ssa.FreeVar) (*ssa.Alloc, *ssa.MakeClosure) {
 	fn := fv.Parent()
 	if !IsRangeBody(fn) {

@@ -18,7 +18,7 @@ import (
 // alone. So an interface that only a test file declares or imports does not
 // exempt it in one check but not the other.
 //
-//declscope:package // checker.go computes it once per pass
+//declscope:shared // checker.go computes it once per pass
 func (c *checker) implementingMethods() map[*types.Func]bool {
 	all := make(map[string][]*types.Interface)
 	plain := make(map[string][]*types.Interface)

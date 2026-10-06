@@ -17,7 +17,7 @@ import (
 // (field-nil-compare). A field left out of a composite literal has no store
 // in SSA, so field-nil-store relies on exhaustruct to make it written.
 //
-//declscope:package // run.go calls it
+//declscope:shared // run.go calls it
 func (c *checker) checkFieldNil(fn *ssa.Function) {
 	nils := flow.NilTracer()
 	for _, b := range fn.Blocks {

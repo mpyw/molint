@@ -27,12 +27,12 @@ func SiteAt(b *ssa.BasicBlock) Site { return Site{block: b} }
 
 // siteEdge is the site of a φ edge from `from` into `to`.
 //
-//declscope:package // tracer.go and pair.go judge φ edges
+//declscope:shared // tracer.go and pair.go judge φ edges
 func siteEdge(from, to *ssa.BasicBlock) Site { return Site{block: to, from: from} }
 
 // state is what the nil checks on the way to the site say about v.
 //
-//declscope:package // tracer.go reads the checks
+//declscope:shared // tracer.go reads the checks
 func (s Site) state(v ssa.Value) nilcheck.State {
 	if s.from != nil {
 		return nilcheck.OnEdge(v, s.from, s.block)

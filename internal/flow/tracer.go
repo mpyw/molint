@@ -52,7 +52,7 @@ func TrueTracer() *Tracer {
 // checked reports whether a nil check at one of sites says v is nil, or not
 // nil. Both are false when the tracer does not count checks.
 //
-//declscope:package // pair.go settles a value before taking its φ apart
+//declscope:shared // pair.go settles a value before taking its φ apart
 func (t *Tracer) checked(v ssa.Value, sites ...Site) (isNil, nonNil bool) {
 	if !t.checks {
 		return false, false
@@ -159,7 +159,7 @@ func (t *Tracer) load(a *ssa.Alloc, load ssa.Instruction) bool {
 // loads and stores uses its address, apart from function literals that only
 // load it.
 //
-//declscope:package // pair.go follows two loads along one path
+//declscope:shared // pair.go follows two loads along one path
 func (t *Tracer) followed(a *ssa.Alloc) bool {
 	if t.follow == nil {
 		t.follow = make(map[*ssa.Alloc]bool)

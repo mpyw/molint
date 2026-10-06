@@ -11,7 +11,7 @@ import (
 // checkWrapNil reports a nil value given to mo.Some or mo.Ok of a type that
 // can be nil, a slice included, and a nil error given to mo.Err.
 //
-//declscope:package // calls.go calls it for each call
+//declscope:shared // calls.go calls it for each call
 func (c *checker) checkWrapNil(call ssa.CallInstruction, callee *ssa.Function, nils *flow.Tracer) {
 	cc := call.Common()
 	if len(cc.Args) == 0 {

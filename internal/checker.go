@@ -14,7 +14,7 @@ import (
 
 // checker is one pass's state.
 //
-//declscope:package
+//declscope:shared
 type checker struct {
 	pass *analysis.Pass
 	// directives is what the package's //molint: comments say.
@@ -36,7 +36,7 @@ type checker struct {
 	diagnostics []analysis.Diagnostic
 }
 
-//declscope:package
+//declscope:shared
 func newChecker(pass *analysis.Pass, cfg Config) *checker {
 	c := &checker{
 		pass:       pass,
@@ -56,7 +56,7 @@ func newChecker(pass *analysis.Pass, cfg Config) *checker {
 // report reports msg at pos for rule r, unless r is off, pos is in a
 // generated file, or an ignore silences it there.
 //
-//declscope:package
+//declscope:shared
 func (c *checker) report(pos token.Pos, r rule.Name, msg string) {
 	if !c.cfg.On(r) || c.inGenerated(pos) {
 		return
@@ -69,7 +69,7 @@ func (c *checker) report(pos token.Pos, r rule.Name, msg string) {
 
 // inGenerated reports whether pos is in a file marked as generated.
 //
-//declscope:package // run.go skips the functions there
+//declscope:shared // run.go skips the functions there
 func (c *checker) inGenerated(pos token.Pos) bool {
 	return c.generated[c.pass.Fset.PositionFor(pos, false).Filename]
 }
@@ -77,14 +77,14 @@ func (c *checker) inGenerated(pos token.Pos) bool {
 // reportf reports a message that belongs to no rule, such as a problem with
 // a directive. No ignore silences it.
 //
-//declscope:package
+//declscope:shared
 func (c *checker) reportf(pos token.Pos, msg string) {
 	c.diagnostics = append(c.diagnostics, analysis.Diagnostic{Pos: pos, Message: msg})
 }
 
 // flush reports what the pass found, in the order of the positions.
 //
-//declscope:package
+//declscope:shared
 func (c *checker) flush() {
 	slices.SortStableFunc(c.diagnostics, func(a, b analysis.Diagnostic) int { return cmp.Compare(a.Pos, b.Pos) })
 	for _, d := range c.diagnostics {

@@ -13,7 +13,7 @@ import (
 // checkUnwrapNil reports OrEmpty, and OrElse with a nil value, on an Option
 // or a Result whose nil breaks on use, as wrap-nil judges it.
 //
-//declscope:package // calls.go calls it for each call
+//declscope:shared // calls.go calls it for each call
 func (c *checker) checkUnwrapNil(call ssa.CallInstruction, callee *ssa.Function, nils *flow.Tracer) {
 	m, name, arg := typeutil.MoMethod(callee)
 	if m == typeutil.NotMo || !typeutil.NilBreaks(arg) {
