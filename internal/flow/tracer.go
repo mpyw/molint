@@ -49,25 +49,6 @@ func TrueTracer() *Tracer {
 	}}
 }
 
-// checked reports whether a nil check at one of sites says v is nil, or not
-// nil. Both are false when the tracer does not count checks.
-//
-//declscope:shared // pair.go settles a value before taking its φ apart
-func (t *Tracer) checked(v ssa.Value, sites ...Site) (isNil, nonNil bool) {
-	if !t.checks {
-		return false, false
-	}
-	for _, s := range sites {
-		switch s.state(v) {
-		case nilcheck.Nil:
-			isNil = true
-		case nilcheck.NonNil:
-			nonNil = true
-		}
-	}
-	return isNil, nonNil
-}
-
 // Is reports whether v may be a bad constant on some path to one of sites.
 // Several sites stand for one path seen at several points: a check at any of
 // them counts.
@@ -153,6 +134,25 @@ func (t *Tracer) load(a *ssa.Alloc, load ssa.Instruction) bool {
 		}
 	}
 	return false
+}
+
+// checked reports whether a nil check at one of sites says v is nil, or not
+// nil. Both are false when the tracer does not count checks.
+//
+//declscope:shared // pair.go settles a value before taking its φ apart
+func (t *Tracer) checked(v ssa.Value, sites ...Site) (isNil, nonNil bool) {
+	if !t.checks {
+		return false, false
+	}
+	for _, s := range sites {
+		switch s.state(v) {
+		case nilcheck.Nil:
+			isNil = true
+		case nilcheck.NonNil:
+			nonNil = true
+		}
+	}
+	return isNil, nonNil
 }
 
 // followed reports whether the loads of a are followed: nothing but its own
