@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/logo.png" alt="" width="128" height="128">
+  <img src=".github/assets/icon.png" alt="" width="128" height="128">
   <h1>molint</h1>
 
   [![CI](https://github.com/mpyw/molint/actions/workflows/ci.yml/badge.svg)](https://github.com/mpyw/molint/actions/workflows/ci.yml)
