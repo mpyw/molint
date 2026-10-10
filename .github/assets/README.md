@@ -2,7 +2,7 @@
 
 | File | Size | Used by |
 | --- | --- | --- |
-| `logo.png` | 512×512, transparent | The top of the README |
+| `icon.png` | 512×512, transparent | The top of the README |
 | `social-preview.png` | 1280×640 | The repository's social preview, set in its settings |
 
 Both were drawn with ChatGPT, then scaled and reduced to 256 colors. To draw them again, give it these prompts in one conversation, in this order.
@@ -60,11 +60,11 @@ no logos, no border.
 The images came out larger than their sizes above. They were scaled with `sips`, then reduced with Pillow:
 
 ```bash
-sips -z 512 512 logo-original.png --out logo.png
+sips -z 512 512 icon-original.png --out icon.png
 sips -z 640 1280 preview-original.png --out social-preview.png
 python3 -c '
 from PIL import Image
-Image.open("logo.png").quantize(256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE).save("logo.png", optimize=True)
+Image.open("icon.png").quantize(256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE).save("icon.png", optimize=True)
 Image.open("social-preview.png").convert("RGB").quantize(256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE).save("social-preview.png", optimize=True)
 '
 ```
