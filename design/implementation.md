@@ -50,8 +50,6 @@ Everything that stands alone has its own package:
 
 `plugin` builds its own copy of the analyzer from the settings, with the rules on that the settings say. Setting the flags of `molint.Analyzer` instead would be state shared by every run in the process. It lives in the main module, since `plugin-module-register` adds no dependency beyond `golang.org/x/tools`. A nested module would need a second tag per release, and would make `declscope shrink` stand down on `internal/`.
 
-`plugin` builds its own copy of the analyzer from the settings, with the rules on that the settings say. Setting the flags of `molint.Analyzer` instead would be state shared by every run in the process. It lives in the main module, since `plugin-module-register` adds no dependency beyond `golang.org/x/tools`.
-
 ### declscope
 
 The repository is checked by [declscope](https://github.com/mpyw/declscope) with `qualify: ondemand` and `exported: true` (`.declscope.yaml`). `declscope shrink` runs before the analyzer.
