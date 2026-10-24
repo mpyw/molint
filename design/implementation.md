@@ -12,9 +12,8 @@ It reads the shape of signatures, and follows values only inside one function. I
 
 ```text
 analyzer.go              Analyzer, one flag per rule
-skills.go                Skills: the embedded skills/ directory
 plugin/                  the golangci-lint module plugin: the settings in place of the flags
-skills/                  the agent skills, installed by `molint skill install`
+skills/                  the agent skills, installed by `molint skill install`, and Set, which embeds them
 cmd/molint/              singlechecker entry point, the skill subcommand, and -V=full
 internal/                the rules: one flat package, one namespace per file
   run.go                 Run: every rule over the package, then the reports in order
