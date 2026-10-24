@@ -53,7 +53,7 @@ molint reads the shape of signatures, and follows values only inside one functio
 
 | Method | Command | Needs |
 | --- | --- | --- |
-| **[mise](https://mise.jdx.dev/)** *(recommended)* | `mise use "github:mpyw/molint@0.3.0"` | Nothing. Installs the prebuilt binary |
+| **[mise](https://mise.jdx.dev/)** *(recommended)* | `mise use "github:mpyw/molint@0.4.0"` | Nothing. Installs the prebuilt binary |
 | `go tool` | `go get -tool github.com/mpyw/molint/cmd/molint@latest` | Go 1.27+ |
 | `go install` | `go install github.com/mpyw/molint/cmd/molint@latest` | Go 1.27+ |
 | Release archive | See below | Nothing |
@@ -70,7 +70,7 @@ molint -V=full   # the release this binary was built from
 
 ```toml
 [tools]
-"github:mpyw/molint" = "0.3.0"
+"github:mpyw/molint" = "0.4.0"
 ```
 
 As a tool dependency in `go.mod`:
@@ -95,7 +95,7 @@ go run github.com/mpyw/molint/cmd/molint@latest ./...
 From a release archive, verified against the published checksums:
 
 ```bash
-VERSION=0.3.0
+VERSION=0.4.0
 curl -LO "https://github.com/mpyw/molint/releases/download/v${VERSION}/molint_${VERSION}_darwin_arm64.tar.gz"
 curl -LO "https://github.com/mpyw/molint/releases/download/v${VERSION}/checksums.txt"
 shasum -a 256 -c checksums.txt --ignore-missing
@@ -109,7 +109,7 @@ version: v2.13.1  # the golangci-lint release to build
 plugins:
   - module: github.com/mpyw/molint
     import: github.com/mpyw/molint/plugin
-    version: v0.3.0
+    version: v0.4.0
 ```
 
 Turn it on in `.golangci.yml`. Each key under `settings` is a rule's name, as the flags take it. A rule left out keeps its default. An unknown name stops the run:
