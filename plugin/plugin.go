@@ -13,18 +13,15 @@ import (
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/mpyw/molint"
-	"github.com/mpyw/molint/internal"
-	"github.com/mpyw/molint/internal/rule"
 )
 
 func init() {
 	register.Plugin(molint.Analyzer.Name, newPlugin)
 }
 
-// pluginRules is the plugin built from one settings block.
-type pluginRules struct {
-	// on holds the rules the settings name.
-	on map[rule.Name]bool
+// pluginAnalyzer is the plugin built from one settings block.
+type pluginAnalyzer struct {
+	analyzer *analysis.Analyzer
 }
 
 func newPlugin(settings any) (register.LinterPlugin, error) {
@@ -32,39 +29,20 @@ func newPlugin(settings any) (register.LinterPlugin, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading settings: %w", err)
 	}
-	on := make(map[rule.Name]bool, len(named))
-	for name, v := range named {
-		if !rule.Known(name) {
-			return nil, fmt.Errorf("unknown rule %q in settings", name)
-		}
-		on[rule.Name(name)] = v
+	a, err := molint.New(molint.Config{Rules: named})
+	if err != nil {
+		return nil, fmt.Errorf("settings: %w", err)
 	}
-	return &pluginRules{on: on}, nil
+	return &pluginAnalyzer{analyzer: a}, nil
 }
 
-// BuildAnalyzers gives molint's analyzer, with the rules the settings turn on.
-// It is a copy, so the flags of molint.Analyzer are left alone.
-func (p *pluginRules) BuildAnalyzers() ([]*analysis.Analyzer, error) {
-	cfg := internal.Config{On: p.ruleOn}
-	return []*analysis.Analyzer{{
-		Name:     molint.Analyzer.Name,
-		Doc:      molint.Analyzer.Doc,
-		URL:      molint.Analyzer.URL,
-		Requires: molint.Analyzer.Requires,
-		Run: func(pass *analysis.Pass) (any, error) {
-			return internal.Run(pass, cfg)
-		},
-	}}, nil
+// BuildAnalyzers gives the analyzer that molint.New built from the settings.
+// It has no flags, so molint.Analyzer is left alone.
+func (p *pluginAnalyzer) BuildAnalyzers() ([]*analysis.Analyzer, error) {
+	return []*analysis.Analyzer{p.analyzer}, nil
 }
 
 // GetLoadMode asks for type information, which buildssa needs.
-func (*pluginRules) GetLoadMode() string {
+func (*pluginAnalyzer) GetLoadMode() string {
 	return register.LoadModeTypesInfo
-}
-
-func (p *pluginRules) ruleOn(r rule.Name) bool {
-	if v, ok := p.on[r]; ok {
-		return v
-	}
-	return rule.OnByDefault(r)
 }

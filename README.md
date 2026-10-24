@@ -135,6 +135,14 @@ golangci-lint custom  # writes ./custom-gcl
 ./custom-gcl run ./...
 ```
 
+From a Go program of your own, build an analyzer with `molint.New`. It takes the same settings as a `molint.Config`, and has no flags. `molint.Analyzer` is the one with flags:
+
+```go
+a, err := molint.New(molint.Config{
+	Rules: map[string]bool{"return-error": true},
+})
+```
+
 </details>
 
 ## Rules
