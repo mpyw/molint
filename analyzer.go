@@ -21,6 +21,10 @@ import (
 // holds its own settings builds an analyzer with New.
 var Analyzer = analyzerWithFlags()
 
+// ErrNoSSA is returned when the pass carries no buildssa result, which means
+// the analyzer was registered without its requirement.
+var ErrNoSSA = internal.ErrRunWithoutSSA
+
 // Config holds the settings of an analyzer that New builds. The zero Config
 // keeps every rule at its default.
 type Config struct {
