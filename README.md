@@ -135,6 +135,14 @@ golangci-lint custom  # writes ./custom-gcl
 ./custom-gcl run ./...
 ```
 
+From a Go program of your own, build an analyzer with `molint.New`. It takes the same settings as a `molint.Config`, and has no flags. `molint.Analyzer` is the one with flags:
+
+```go
+a, err := molint.New(molint.Config{
+	Rules: map[string]bool{"return-error": true},
+})
+```
+
 </details>
 
 ## Rules
@@ -924,6 +932,10 @@ These are reported although no run returns nil, since branches are taken as inde
 | A retry loop that ends with `return nil, err` | Start the error at a sentinel, so that no round leaves it nil |
 
 The full specification, with every limit, is [design/rules.md](design/rules.md).
+
+## AI usage
+
+molint is developed with AI coding agents (Claude Code). The rules in [design/rules.md](design/rules.md) and the fixtures under `testdata/src/` define what it reports.
 
 ## License
 

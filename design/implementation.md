@@ -11,8 +11,8 @@ It reads the shape of signatures, and follows values only inside one function. I
 ## Architecture
 
 ```text
-analyzer.go              Analyzer, one flag per rule
-plugin/                  the golangci-lint module plugin: the settings in place of the flags
+analyzer.go              Analyzer, with one flag per rule, and New, which takes a Config instead
+plugin/                  the golangci-lint module plugin: the settings, read into a Config for New
 skills/                  the agent skills, installed by `molint skill install`, and Set, which embeds them
 cmd/molint/              singlechecker entry point, the skill subcommand, and -V=full
 internal/                the rules: one flat package, one namespace per file
