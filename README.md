@@ -925,6 +925,10 @@ These are reported although no run returns nil, since branches are taken as inde
 
 The full specification, with every limit, is [design/rules.md](design/rules.md).
 
+## AI usage
+
+molint is developed with AI coding agents (Claude Code). The rules in [design/rules.md](design/rules.md) and the fixtures under `testdata/src/` define what it reports.
+
 ## License
 
 [MIT](LICENSE)

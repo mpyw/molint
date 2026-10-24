@@ -15,23 +15,23 @@ import (
 )
 
 // Analyzer enforces the use of github.com/samber/mo.
-var Analyzer = &analysis.Analyzer{
-	Name:     "molint",
-	Doc:      "enforces the use of github.com/samber/mo",
-	URL:      "https://github.com/mpyw/molint",
-	Requires: []*analysis.Analyzer{buildssa.Analyzer},
-	Run:      runAnalyzer,
-}
+var Analyzer = analyzerNew()
 
-// analyzerFlagOf holds the flag of each rule.
-var analyzerFlagOf = make(map[rule.Name]*bool)
-
-func init() {
-	for _, r := range rule.All {
-		analyzerFlagOf[r] = Analyzer.Flags.Bool(string(r), rule.OnByDefault(r), "report "+string(r))
+// analyzerNew builds the analyzer with a flag for each rule. The flags live
+// in the closure of Run, so nothing is shared but the analyzer itself.
+func analyzerNew() *analysis.Analyzer {
+	a := &analysis.Analyzer{
+		Name:     "molint",
+		Doc:      "enforces the use of github.com/samber/mo",
+		URL:      "https://github.com/mpyw/molint",
+		Requires: []*analysis.Analyzer{buildssa.Analyzer},
 	}
-}
-
-func runAnalyzer(pass *analysis.Pass) (any, error) {
-	return internal.Run(pass, internal.Config{On: func(r rule.Name) bool { return *analyzerFlagOf[r] }})
+	on := make(map[rule.Name]*bool, len(rule.All))
+	for _, r := range rule.All {
+		on[r] = a.Flags.Bool(string(r), rule.OnByDefault(r), "report "+string(r))
+	}
+	a.Run = func(pass *analysis.Pass) (any, error) {
+		return internal.Run(pass, internal.Config{On: func(r rule.Name) bool { return *on[r] }})
+	}
+	return a
 }
