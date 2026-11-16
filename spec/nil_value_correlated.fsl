@@ -22,6 +22,7 @@
 // design/rules.md defines a nil value as nil on some path, with branches
 // taken as independent. nil_value.fsl proves that meaning under its ASSUME-1,
 // which this file drops.
+fsl 5
 spec NilValueCorrelated {
   enum Op { Nil, Alloc, Ext }
   enum Val { NilConst, NilExt, NonNil }

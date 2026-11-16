@@ -29,3 +29,11 @@ Thumbs.db
 # Task tracking (session-specific, not committed)
 TASKS.md
 
+
+# FSL agent skills. mise links them from the fslc version in mise.toml
+# (skills.auto_sync, or `mise skills sync`). Each link points into the mise
+# install directory of one machine, so do not commit them. The other skills in
+# .agents/skills are committed.
+.agents/skills/fsl
+.agents/skills/fsl-*
+.agents/skills/.mise-skills.json

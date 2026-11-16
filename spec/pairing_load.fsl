@@ -43,6 +43,7 @@
 // ASSUME-1: branches are taken as independent, as the rule defines.
 // ASSUME-2 (representation only): the trailing result is an error; a bool
 //   pairs the same way (pairing.fsl, pairing_stores.fsl).
+fsl 5
 spec PairingLoad {
   enum UOp { Nil, Alloc, Ext }
   enum EOp { EKeep, EBad, EGood, EOut }

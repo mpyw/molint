@@ -1,5 +1,19 @@
+# mise 2026.11.0 is the first version that links the fsl-* skills into
+# .agents/skills when skills.dir is not set. An older mise puts them in
+# .claude/skills only, so require at least this version.
+min_version = "2026.11.0"
+
 # Pins the tools so that CI and a local checkout run the same ones.
 [tools]
 go = "1.27.0"
 golangci-lint = "2.13.1"
 "github:mpyw/declscope" = "0.25.0"
+# fslc is the FSL verifier for spec/. The packslip backend checks the release
+# signature and digest, and also fetches the fsl-* agent skills of this version.
+"packslip:github.com/ymm-oss/fsl/fslc" = "5.1.0"
+
+[settings.skills]
+# After mise installs a new fslc version, link that version's fsl-* skills into
+# .agents/skills. A version that is already installed is not linked again; run
+# `mise skills sync` by hand then.
+auto_sync = true

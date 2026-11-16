@@ -17,6 +17,7 @@
 // brings(). The run is also limited to programs that nil_value.fsl's rule
 // does not report, so every report here is this rule's own, and every check
 // can succeed and fail (ASSUME-2 of nil_value.fsl).
+fsl 5
 spec NilValueNoCheck {
   enum Op { Nil, Alloc, Ext, PhiA, PhiB }
   enum Guard { NoCheck, IsNil, NotNil }
@@ -61,16 +62,16 @@ spec NilValueNoCheck {
     forall k: Edge { r[k] = pick5(14 + 3 * k)  g[k] = pickGuard(23 + 2 * k) }
     a = NonNil  b = NonNil  iters = 0  rv = NonNil  taken = 0
     // The forward runs, then the verdict and the witness. init assigns in
-    // order, so each line reads the ones above it. The verdict reads only the
-    // program.
-    fa[0] = evAt(a0, false, NonNil, NonNil)  fb[0] = evAt(b0, false, NonNil, NonNil)
-    fa[4] = evAt(a0, true, NonNil, NonNil)  fb[4] = evAt(b0, true, NonNil, NonNil)
-    fa[1] = step(false, 0)  fb[1] = stepB(false, 0)
-    fa[5] = step(true, 0)  fb[5] = stepB(true, 0)
-    fa[2] = step(false, 1)  fb[2] = stepB(false, 1)
-    fa[6] = step(true, 1)  fb[6] = stepB(true, 1)
-    fa[3] = step(false, 2)  fb[3] = stepB(false, 2)
-    fa[7] = step(true, 2)  fb[7] = stepB(true, 2)
+    // order, so the verdict and the witness read the runs above them. The
+    // verdict reads only the program.
+    fa[0] = runA0(false)  fb[0] = runB0(false)
+    fa[4] = runA0(true)  fb[4] = runB0(true)
+    fa[1] = runA1(false)  fb[1] = runB1(false)
+    fa[5] = runA1(true)  fb[5] = runB1(true)
+    fa[2] = runA2(false)  fb[2] = runB2(false)
+    fa[6] = runA2(true)  fb[6] = runB2(true)
+    fa[3] = runA3(false)  fb[3] = runB3(false)
+    fa[7] = runA3(true)  fb[7] = runB3(true)
     rep = reported()  w = wk()  wnil = wp()  wrounds = wi()
     follow = false
   }
@@ -135,6 +136,19 @@ spec NilValueNoCheck {
     upd(ga, evAt(a1, p, fa[slot(p, i)], fb[slot(p, i)]), fa[slot(p, i)])
   def stepB(p: Bool, i: Iter) =
     upd(gb, evAt(b1, p, fa[slot(p, i)], fb[slot(p, i)]), fb[slot(p, i)])
+  // The same run, from the values (x, y) of a and b before a round. init
+  // uses these, since it cannot read fa or fb while it is still assigning
+  // them.
+  def nextA(p: Bool, x: Val, y: Val) = upd(ga, evAt(a1, p, x, y), x)
+  def nextB(p: Bool, x: Val, y: Val) = upd(gb, evAt(b1, p, x, y), y)
+  def runA0(p: Bool) = evAt(a0, p, NonNil, NonNil)
+  def runB0(p: Bool) = evAt(b0, p, NonNil, NonNil)
+  def runA1(p: Bool) = nextA(p, runA0(p), runB0(p))
+  def runB1(p: Bool) = nextB(p, runA0(p), runB0(p))
+  def runA2(p: Bool) = nextA(p, runA1(p), runB1(p))
+  def runB2(p: Bool) = nextB(p, runA1(p), runB1(p))
+  def runA3(p: Bool) = nextA(p, runA2(p), runB2(p))
+  def runB3(p: Bool) = nextB(p, runA2(p), runB2(p))
 
   def atJoin(k: Edge, p: Bool, i: Iter) = evAt(r[k], p, fa[slot(p, i)], fb[slot(p, i)])
   def okAt(k: Edge, p: Bool, i: Iter) =
