@@ -69,6 +69,7 @@
 //   rejected reading that it does not.
 // ASSUME-4 (representation only): one Result variable, two edges into P,
 //   three into J, one comparison per edge of J, one instruction.
+fsl 5
 spec ResultZero {
   enum Op { Keep, Zero, Built, Ext }
   enum Cmp { NoCmp, EqZero, NeZero }

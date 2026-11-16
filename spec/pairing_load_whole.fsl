@@ -14,6 +14,7 @@
 // The program, the run and the claim are those of pairing_load.fsl, except
 // for reported(). The witness takes the edge whose stores make err nil. The
 // run is limited to programs that pairing_load.fsl's rule does not report.
+fsl 5
 spec PairingLoadWhole {
   enum UOp { Nil, Alloc, Ext }
   enum EOp { EKeep, EBad, EGood, EOut }

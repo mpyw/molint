@@ -18,6 +18,7 @@
 // reported, the witness run returns the nil constant. It breaks here, and
 // that is the consequence the rules accept. local_store_escape.fsl holds the
 // bare-return form, which loads p and is not followed.
+fsl 5
 spec ReturnStoreDeferred {
   enum Op { Nil, Alloc, Ext }
   enum Effect { Keeps, SetsNonNil, SetsOutside }

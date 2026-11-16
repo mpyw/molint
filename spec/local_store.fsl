@@ -74,6 +74,7 @@
 //   values it stores. The consequence the rules accept, that a deferred
 //   store may replace a nil the return stored, is documented by
 //   return_store_deferred.fsl.
+fsl 5
 spec LocalStore {
   enum Store { Keep, Nil, Alloc, Ext }
   enum Escape { NoEscape, LoadsOnly, StoresInto, AddrPassed }

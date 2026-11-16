@@ -18,6 +18,7 @@
 // so the edge the witness is blocked on is a live one. The run is limited to
 // programs that result_zero.fsl's rule does not report, so every report here
 // is this rule's own.
+fsl 5
 spec ResultZeroNoCheck {
   enum Op { Keep, Zero, Built, Ext }
   enum Cmp { NoCmp, EqZero, NeZero }

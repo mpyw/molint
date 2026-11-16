@@ -14,6 +14,7 @@
 //
 // The program, the run and the claim are those of local_store.fsl, except
 // for loadNil().
+fsl 5
 spec LocalStoreLast {
   enum Store { Keep, Nil, Alloc, Ext }
   enum Escape { NoEscape, LoadsOnly, StoresInto, AddrPassed }

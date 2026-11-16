@@ -111,19 +111,19 @@ One more gap has no spec. A check on a loaded variable that SSA does not lift is
 ./verify.sh
 ```
 
-The script reads each verdict from `fslc`'s JSON with Python, never from its exit code. The proved specs must be `proved` under induction. The naive and gap specs must be `violated` on the named invariant, and the output says which kind each is. A spec in the directory that is named in no list fails the run. Without `fslc` the script skips the specs, except in CI (`CI` set), where it fails. CI installs the fslc version below.
+The script reads each verdict from `fslc`'s JSON with Python, never from its exit code. The proved specs must be `proved` under induction. The naive and gap specs must be `violated` on the named invariant, and the output says which kind each is. A spec in the directory that is named in no list fails the run. Without `fslc` the script skips the specs, except in CI (`CI` set), where it fails. CI and `mise install` use the fslc version that `mise.toml` pins.
 
 ## Mutation
 
-`fslc mutate <spec> --depth 8`, measured on fslc 4.0.0:
+`fslc mutate <spec> --depth 8`, measured on fslc 5.1.0:
 
 | Spec | Mutants | Killed | Kill rate |
 | --- | --- | --- | --- |
-| `nil_value.fsl` | 200 | 152 | 76% |
-| `pairing.fsl` | 200 | 148 | 74% |
-| `pairing_stores.fsl` | 200 | 165 | 82% |
-| `pairing_load.fsl` | 82 | 70 | 85% |
+| `nil_value.fsl` | 200 | 174 | 87% |
+| `pairing.fsl` | 200 | 155 | 77% |
+| `pairing_stores.fsl` | 200 | 170 | 85% |
+| `pairing_load.fsl` | 82 | 74 | 90% |
 | `local_store.fsl` | 141 | 123 | 87% |
-| `result_zero.fsl` | 155 | 125 | 81% |
+| `result_zero.fsl` | 155 | 128 | 82% |
 
 Most survivors change which free choice bit picks an operand, or the bounds of the bit index. Both leave the set of programs the same. The rest touch state the run writes before it reads, the `abort` action of a run whose checks all fail, or a ghost that only the auxiliary invariants read.

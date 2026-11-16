@@ -21,6 +21,7 @@
 // The program, the run and the claim are those of local_store.fsl, except
 // for followed(). The run is limited to programs that local_store.fsl's rule
 // does not report, so every report here is this rule's own.
+fsl 5
 spec LocalStoreEscape {
   enum Store { Keep, Nil, Alloc, Ext }
   enum Escape { NoEscape, LoadsOnly, StoresInto, AddrPassed }

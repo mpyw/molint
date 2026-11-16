@@ -11,6 +11,7 @@
 // The program, the run and the claim are those of result_zero.fsl, except
 // for zeroAtUse(). The run is limited to programs that result_zero.fsl's
 // rule does not report.
+fsl 5
 spec ResultZeroNoKill {
   enum Op { Keep, Zero, Built, Ext }
   enum Cmp { NoCmp, EqZero, NeZero }

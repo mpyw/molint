@@ -16,6 +16,7 @@
 // reported(). The witness takes, for each result, the first edge and path
 // that make it nil or Bad, and runs the one for the error. The run is limited
 // to programs that pairing.fsl's rule does not report.
+fsl 5
 spec PairingNaive {
   enum UOp { UKeep, Nil, Alloc, Ext, UFromH }
   enum SOp { SKeep, Bad, Good, Out, SFromH }

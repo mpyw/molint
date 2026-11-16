@@ -16,6 +16,7 @@
 // for reported() and the witness, which takes the path that gave the error.
 // The run is limited to programs that pairing_stores.fsl's rule does not
 // report, so every report here is this rule's own.
+fsl 5
 spec PairingBareReturn {
   enum UStore { UKeep, UNil, UAlloc, UExt, UFromP }
   enum EStore { EKeep, EBad, EGood, EOut, EFromP }

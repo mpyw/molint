@@ -61,6 +61,7 @@
 //   outside, or x and e. Nil checks on the way are nil_value.fsl's and
 //   pairing.fsl's subject; on a loaded variable they are a gap (local_store.fsl
 //   ASSUME-3).
+fsl 5
 spec PairingStores {
   enum UStore { UKeep, UNil, UAlloc, UExt, UFromP }
   enum EStore { EKeep, EBad, EGood, EOut, EFromP }

@@ -60,6 +60,7 @@
 // ASSUME-4 (representation only): two arms in the loop and three edges into
 //   J. The loop gives the recursion into an earlier block, and a pair whose
 //   two values come from different rounds.
+fsl 5
 spec Pairing {
   enum UOp { UKeep, Nil, Alloc, Ext, UFromH }
   enum SOp { SKeep, Bad, Good, Out, SFromH }
