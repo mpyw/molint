@@ -29,15 +29,22 @@ spec ReturnStoreDeferred {
   state {
     pc: Pc,
     ch: Map<Bit, Bool>,
-    v: Op, eff: Effect,
-    rep: Bool, p: Val, rv: Val, follow: Bool
+    v: Op,
+    eff: Effect,
+    rep: Bool,
+    p: Val,
+    rv: Val,
+    follow: Bool
   }
 
   init {
     pc = Ready
     v = if ch[0] then Nil else if ch[1] then Alloc else Ext
     eff = if ch[2] then Keeps else if ch[3] then SetsNonNil else SetsOutside
-    rep = false  p = NonNil  rv = NonNil  follow = false
+    rep = false
+    p = NonNil
+    rv = NonNil
+    follow = false
   }
 
   // The rule as written: the stored value is judged.
@@ -45,7 +52,8 @@ spec ReturnStoreDeferred {
 
   action judge() {
     requires pc == Ready
-    pc = Judged  rep = reported()
+    pc = Judged
+    rep = reported()
   }
 
   action store(n: Bool) {

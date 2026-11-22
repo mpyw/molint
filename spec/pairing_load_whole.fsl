@@ -27,11 +27,19 @@ spec PairingLoadWhole {
     pc: Pc,
     ch: Map<Bit, Bool>,
     // the program
-    pe: Map<Pre, EOp>, uk: Map<Edge, UOp>, ek: Map<Edge, EOp>,
+    pe: Map<Pre, EOp>,
+    uk: Map<Edge, UOp>,
+    ek: Map<Edge, EOp>,
     // the verdict and its witness
-    rep: Bool, wk: Edge, we: Pre,
+    rep: Bool,
+    wk: Edge,
+    we: Pre,
     // the run's own record
-    errBad: Bool, uv: Bool, uOut: Bool, eb: Bool, follow: Bool
+    errBad: Bool,
+    uv: Bool,
+    uOut: Bool,
+    eb: Bool,
+    follow: Bool
   }
 
   def pickU(i: Bit) = if ch[i] then Nil else if ch[i + 1] then Alloc else Ext
@@ -47,25 +55,39 @@ spec PairingLoadWhole {
   def reachesBad(k: Edge, e: Pre) = if ek[k] != EKeep then ek[k] == EBad else badStore(pe[e])
   def pairs(k: Edge, e: Pre) = uk[k] == Nil and reachesBad(k, e)
   // THE NAIVE RULE: the load is judged whole.
-  def reported() = (exists k: Edge { uk[k] == Nil }) and (exists k: Edge { exists e: Pre { reachesBad(k, e) } })
+  def reported() =
+    (exists k: Edge { uk[k] == Nil })
+    and (exists k: Edge { exists e: Pre { reachesBad(k, e) } })
   // The rule of pairing_load.fsl, to pick the programs it does not report.
   def provedReported() = exists k: Edge { exists e: Pre { pairs(k, e) } }
   def firstEdge() =
-    if exists e: Pre { reachesBad(0, e) } then 0 else if exists e: Pre { reachesBad(1, e) } then 1 else 2
+    if exists e: Pre { reachesBad(0, e) } then 0
+    else if exists e: Pre { reachesBad(1, e) } then 1
+    else 2
   def firstPre(k: Edge) = if reachesBad(k, 0) then 0 else 1
 
   init {
     pc = Ready
     forall e: Pre { pe[e] = pickE(2 * e) }
-    forall k: Edge { uk[k] = pickU(4 + 4 * k)  ek[k] = pickE(6 + 4 * k) }
-    rep = reported()  wk = firstEdge()  we = firstPre(firstEdge())
-    errBad = true  uv = false  uOut = false  eb = false  follow = false
+    forall k: Edge {
+      uk[k] = pickU(4 + 4 * k)
+      ek[k] = pickE(6 + 4 * k)
+    }
+    rep = reported()
+    wk = firstEdge()
+    we = firstPre(firstEdge())
+    errBad = true
+    uv = false
+    uOut = false
+    eb = false
+    follow = false
   }
 
   // --- the run --------------------------------------------------------------------
 
   action early(e: Pre) {
-    requires pc == Ready  requires not provedReported()
+    requires pc == Ready
+    requires not provedReported()
     pc = Early
     errBad = if pe[e] == EKeep then errBad else pe[e] == EBad
     follow = rep and e == we
@@ -74,7 +96,8 @@ spec PairingLoadWhole {
   action arm(k: Edge, n: Bool) {
     requires pc == Early
     pc = Returned
-    uv = uk[k] == Nil  uOut = uk[k] == Ext and n
+    uv = uk[k] == Nil
+    uOut = uk[k] == Ext and n
     eb = if ek[k] == EKeep then errBad else ek[k] == EBad
     follow = follow and k == wk and not n
   }
@@ -93,16 +116,30 @@ spec PairingLoadWhole {
 
   // if b { u = x } else { err = e }; return u, err: kept apart.
   reachable EdgesKeptApart {
-    pc == Returned and not reported() and uk[0] == Alloc and ek[0] == EKeep
-    and uk[1] == Nil and ek[1] == EGood and pe[0] == EKeep and pe[1] == EKeep
+    pc == Returned
+    and not reported()
+    and uk[0] == Alloc
+    and ek[0] == EKeep
+    and uk[1] == Nil
+    and ek[1] == EGood
+    and pe[0] == EKeep
+    and pe[1] == EKeep
   }
   // The earlier if stores the nil error on one arm, and a non-nil one on the
   // other: the load has two alternatives on the edge that keeps err.
   reachable EarlierStoreReported {
-    pc == Returned and reported() and follow and ek[wk] == EKeep and pe[we] == EBad
+    pc == Returned
+    and reported()
+    and follow
+    and ek[wk] == EKeep
+    and pe[we] == EBad
     and pe[1 - we] == EGood
   }
   reachable ZeroThroughBoth {
-    pc == Returned and reported() and follow and ek[wk] == EKeep and pe[we] == EKeep
+    pc == Returned
+    and reported()
+    and follow
+    and ek[wk] == EKeep
+    and pe[we] == EKeep
   }
 }

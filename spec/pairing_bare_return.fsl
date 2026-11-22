@@ -32,16 +32,36 @@ spec PairingBareReturn {
     pc: Pc,
     ch: Map<Bit, Bool>,
     // the program
-    px: Map<Pre, UStore>, py: Map<Pre, EStore>,
-    u0: UStore, e0: EStore, us: Map<Arm, UStore>, es: Map<Arm, EStore>,
-    au: UStore, ae: EStore, looped: Bool, isBool: Bool,
+    px: Map<Pre, UStore>,
+    py: Map<Pre, EStore>,
+    u0: UStore,
+    e0: EStore,
+    us: Map<Arm, UStore>,
+    es: Map<Arm, EStore>,
+    au: UStore,
+    ae: EStore,
+    looped: Bool,
+    isBool: Bool,
     // the verdict and its witness path
-    rep: Bool, wx: Step, wy: Step, we: Pre,
+    rep: Bool,
+    wx: Step,
+    wy: Step,
+    we: Pre,
     // the run: which store each result holds, and which came last
-    uSrc: Step, eSrc: Step, uLater: Bool, lastArm: Step, rounds: Rounds, taken: Pre,
+    uSrc: Step,
+    eSrc: Step,
+    uLater: Bool,
+    lastArm: Step,
+    rounds: Rounds,
+    taken: Pre,
     // the run's own record of the values
-    xNil: Bool, xOut: Bool, eBadP: Bool,
-    uv: Bool, uOut: Bool, eb: Bool, follow: Bool
+    xNil: Bool,
+    xOut: Bool,
+    eBadP: Bool,
+    uv: Bool,
+    uOut: Bool,
+    eb: Bool,
+    follow: Bool
   }
 
   def pickU(i: Bit) =
@@ -61,9 +81,13 @@ spec PairingBareReturn {
   // The last store of each result on the path x, then y, then the store after
   // the loop; x and e from P are read along P's edge p.
   def loopU(x: Step, y: Step) =
-    if y != 2 and us[y] != UKeep then us[y] else if x != 2 and us[x] != UKeep then us[x] else u0
+    if y != 2 and us[y] != UKeep then us[y]
+    else if x != 2 and us[x] != UKeep then us[x]
+    else u0
   def loopE(x: Step, y: Step) =
-    if y != 2 and es[y] != EKeep then es[y] else if x != 2 and es[x] != EKeep then es[x] else e0
+    if y != 2 and es[y] != EKeep then es[y]
+    else if x != 2 and es[x] != EKeep then es[x]
+    else e0
   def finU(x: Step, y: Step, p: Pre) =
     if au == UFromP then px[p] else if au != UKeep then au else loopU(x, y)
   def finE(x: Step, y: Step, p: Pre) =
@@ -83,22 +107,47 @@ spec PairingBareReturn {
   // The witness runs the path that makes the error Bad.
   def eAt(x: Step, y: Step) = exists p: Pre { eReach(x, y, p) }
   def firstX() =
-    if exists y: Step { eAt(0, y) } then 0 else if exists y: Step { eAt(1, y) } then 1 else 2
+    if exists y: Step { eAt(0, y) } then 0
+    else if exists y: Step { eAt(1, y) } then 1
+    else 2
   def firstY(x: Step) = if eAt(x, 0) then 0 else if eAt(x, 1) then 1 else 2
   def firstP(x: Step, y: Step) = if eReach(x, y, 0) then 0 else 1
   def len(x: Step, y: Step) = (if x != 2 then 1 else 0) + (if y != 2 then 1 else 0)
 
   init {
     pc = Ready
-    forall p: Pre { px[p] = pickPU(4 * p)  py[p] = pickPE(4 * p + 2) }
-    u0 = pickU(8)  e0 = pickE(10)
-    forall k: Arm { us[k] = pickU(12 + 4 * k)  es[k] = pickE(14 + 4 * k) }
-    au = pickAU(20)  ae = pickAE(23)  looped = ch[26]  isBool = ch[27]
+    forall p: Pre {
+      px[p] = pickPU(4 * p)
+      py[p] = pickPE(4 * p + 2)
+    }
+    u0 = pickU(8)
+    e0 = pickE(10)
+    forall k: Arm {
+      us[k] = pickU(12 + 4 * k)
+      es[k] = pickE(14 + 4 * k)
+    }
+    au = pickAU(20)
+    ae = pickAE(23)
+    looped = ch[26]
+    isBool = ch[27]
     // The verdict and the witness read only the program set above.
-    rep = reported()  wx = firstX()  wy = firstY(firstX())  we = firstP(firstX(), firstY(firstX()))
-    uSrc = 2  eSrc = 2  uLater = false  lastArm = 2  rounds = 0  taken = 0
-    xNil = false  xOut = false  eBadP = false
-    uv = true  uOut = false  eb = not isBool  follow = false
+    rep = reported()
+    wx = firstX()
+    wy = firstY(firstX())
+    we = firstP(firstX(), firstY(firstX()))
+    uSrc = 2
+    eSrc = 2
+    uLater = false
+    lastArm = 2
+    rounds = 0
+    taken = 0
+    xNil = false
+    xOut = false
+    eBadP = false
+    uv = true
+    uOut = false
+    eb = not isBool
+    follow = false
   }
 
   // --- the run --------------------------------------------------------------------
@@ -109,33 +158,46 @@ spec PairingBareReturn {
   def storesBad(s: EStore, old: Bool) = if s == EKeep then old else s == EBad
 
   action passP(p: Pre, n: Bool) {
-    requires pc == Ready  requires not provedReported()
-    pc = Joined  taken = p
-    xNil = px[p] == UNil  xOut = px[p] == UExt and n  eBadP = py[p] == EBad
+    requires pc == Ready
+    requires not provedReported()
+    pc = Joined
+    taken = p
+    xNil = px[p] == UNil
+    xOut = px[p] == UExt and n
+    eBadP = py[p] == EBad
     follow = rep and p == we and not n
   }
 
   action enter(n: Bool) {
     requires pc == Joined
     pc = Loop
-    uv = storesNil(u0, uv)  uOut = storesOut(u0, n, uOut)  eb = storesBad(e0, eb)
+    uv = storesNil(u0, uv)
+    uOut = storesOut(u0, n, uOut)
+    eb = storesBad(e0, eb)
     follow = follow and not n
   }
 
   action round(k: Arm, n: Bool) {
-    requires pc == Loop  requires looped or rounds == 0
-    uv = storesNil(us[k], uv)  uOut = storesOut(us[k], n, uOut)  eb = storesBad(es[k], eb)
+    requires pc == Loop
+    requires looped or rounds == 0
+    uv = storesNil(us[k], uv)
+    uOut = storesOut(us[k], n, uOut)
+    eb = storesBad(es[k], eb)
     uSrc = if us[k] != UKeep then k else uSrc
     eSrc = if es[k] != EKeep then k else eSrc
     uLater = if us[k] != UKeep and es[k] == EKeep then true
              else if es[k] != EKeep then false else uLater
     lastArm = k
     rounds = min(rounds + 1, 2)
-    follow = follow and rounds < len(wx, wy) and (if rounds == 0 then k == wx else k == wy) and not n
+    follow = follow
+             and rounds < len(wx, wy)
+             and (if rounds == 0 then k == wx else k == wy)
+             and not n
   }
 
   action leave() {
-    requires pc == Loop  requires looped or rounds == 1
+    requires pc == Loop
+    requires looped or rounds == 1
     pc = Left
     follow = follow and rounds == len(wx, wy)
   }
@@ -169,39 +231,77 @@ spec PairingBareReturn {
 
   // --- witnesses ------------------------------------------------------------------
 
+  def noStoreAfterLoop() = au == UKeep and ae == EKeep
+  def storesBothFromP() = au == UFromP and ae == EFromP
+
   // if c { u = x } else { err = e }; return: each path stores one result.
   reachable ArmsKeptApart {
-    pc == Returned and not reported() and not looped and not isBool
-    and u0 == UKeep and e0 == EKeep and au == UKeep and ae == EKeep
-    and us[0] == UAlloc and es[0] == EKeep and us[1] == UKeep and es[1] == EGood
+    pc == Returned
+    and not reported()
+    and not looped
+    and not isBool
+    and u0 == UKeep
+    and e0 == EKeep
+    and noStoreAfterLoop()
+    and us[0] == UAlloc
+    and es[0] == EKeep
+    and us[1] == UKeep
+    and es[1] == EGood
   }
   // An arm that stores neither lets both zeros through: nil with a nil error.
   reachable BothZerosThroughAnArm {
-    pc == Returned and reported() and follow and not looped and not isBool
-    and us[wx] == UKeep and es[wx] == EKeep and au == UKeep and ae == EKeep
+    pc == Returned
+    and reported()
+    and follow
+    and not looped
+    and not isBool
+    and us[wx] == UKeep
+    and es[wx] == EKeep
+    and noStoreAfterLoop()
   }
   // The loop pairs a nil stored in one round with a nil error stored in the
   // next, which no single arm does.
   reachable PairAcrossRounds {
-    pc == Returned and follow and looped and wy != 2 and au == UKeep and ae == EKeep
-    and not pairsAt(wx, 2) and not pairsAt(wy, 2)
+    pc == Returned
+    and follow
+    and looped
+    and wy != 2
+    and noStoreAfterLoop()
+    and not pairsAt(wx, 2)
+    and not pairsAt(wy, 2)
   }
   // u, err = x, e with x, e φ-nodes of P: paired along P, not reported.
   reachable StoredPhisKeptApart {
-    pc == Returned and not reported() and au == UFromP and ae == EFromP
-    and px[0] == UNil and py[0] == EGood and px[1] == UExt and py[1] == EBad
+    pc == Returned
+    and not reported()
+    and storesBothFromP()
+    and px[0] == UNil
+    and py[0] == EGood
+    and px[1] == UExt
+    and py[1] == EBad
   }
   reachable StoredPhisReported {
-    pc == Returned and follow and au == UFromP and ae == EFromP
+    pc == Returned and follow and storesBothFromP()
   }
   // The store after the loop kills everything before it.
   reachable AfterStoreKills {
-    pc == Returned and not reported() and au == UAlloc and pairsAt(0, 2) == false
-    and (exists x: Step { exists y: Step { path(x, y) and uNil(loopU(x, y)) and eBad(loopE(x, y)) } })
+    pc == Returned
+    and not reported()
+    and au == UAlloc
+    and pairsAt(0, 2) == false
+    and (exists x: Step { exists y: Step {
+      path(x, y) and uNil(loopU(x, y)) and eBad(loopE(x, y))
+    } })
   }
   // With a bool, the zero of the Alloc is false: nothing to pair.
   reachable BoolZeroIsFalse {
-    pc == Returned and not reported() and isBool and uv and e0 == EKeep and eSrc == 2 and ae == EKeep
+    pc == Returned
+    and not reported()
+    and isBool
+    and uv
+    and e0 == EKeep
+    and eSrc == 2
+    and ae == EKeep
   }
   // A nil from outside with a nil error is not reported. The gap.
   reachable OutsideNilIsMissed { pc == Returned and not reported() and uOut and eb }

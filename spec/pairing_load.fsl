@@ -56,11 +56,19 @@ spec PairingLoad {
     pc: Pc,
     ch: Map<Bit, Bool>,
     // the program
-    pe: Map<Pre, EOp>, uk: Map<Edge, UOp>, ek: Map<Edge, EOp>,
+    pe: Map<Pre, EOp>,
+    uk: Map<Edge, UOp>,
+    ek: Map<Edge, EOp>,
     // the verdict and its witness
-    rep: Bool, wk: Edge, we: Pre,
+    rep: Bool,
+    wk: Edge,
+    we: Pre,
     // the run's own record
-    errBad: Bool, uv: Bool, uOut: Bool, eb: Bool, follow: Bool
+    errBad: Bool,
+    uv: Bool,
+    uOut: Bool,
+    eb: Bool,
+    follow: Bool
   }
 
   def pickU(i: Bit) = if ch[i] then Nil else if ch[i + 1] then Alloc else Ext
@@ -77,15 +85,26 @@ spec PairingLoad {
   def pairs(k: Edge, e: Pre) = uk[k] == Nil and reachesBad(k, e)
   def reported() = exists k: Edge { exists e: Pre { pairs(k, e) } }
   def firstEdge() =
-    if exists e: Pre { pairs(0, e) } then 0 else if exists e: Pre { pairs(1, e) } then 1 else 2
+    if exists e: Pre { pairs(0, e) } then 0
+    else if exists e: Pre { pairs(1, e) } then 1
+    else 2
   def firstPre(k: Edge) = if pairs(k, 0) then 0 else 1
 
   init {
     pc = Ready
     forall e: Pre { pe[e] = pickE(2 * e) }
-    forall k: Edge { uk[k] = pickU(4 + 4 * k)  ek[k] = pickE(6 + 4 * k) }
-    rep = reported()  wk = firstEdge()  we = firstPre(firstEdge())
-    errBad = true  uv = false  uOut = false  eb = false  follow = false
+    forall k: Edge {
+      uk[k] = pickU(4 + 4 * k)
+      ek[k] = pickE(6 + 4 * k)
+    }
+    rep = reported()
+    wk = firstEdge()
+    we = firstPre(firstEdge())
+    errBad = true
+    uv = false
+    uOut = false
+    eb = false
+    follow = false
   }
 
   // --- the run --------------------------------------------------------------------
@@ -100,7 +119,8 @@ spec PairingLoad {
   action arm(k: Edge, n: Bool) {
     requires pc == Early
     pc = Returned
-    uv = uk[k] == Nil  uOut = uk[k] == Ext and n
+    uv = uk[k] == Nil
+    uOut = uk[k] == Ext and n
     eb = if ek[k] == EKeep then errBad else ek[k] == EBad
     follow = follow and k == wk and not n
   }
@@ -114,8 +134,14 @@ spec PairingLoad {
 
   // --- auxiliary ------------------------------------------------------------------
 
-  invariant VerdictFixed { rep == reported() and wk == firstEdge() and we == firstPre(firstEdge()) }
-  invariant FreshBeforeRun { pc == Ready => (errBad and not uv and not uOut and not eb and not follow) }
+  invariant VerdictFixed {
+    rep == reported()
+    and wk == firstEdge()
+    and we == firstPre(firstEdge())
+  }
+  invariant FreshBeforeRun {
+    pc == Ready => (errBad and not uv and not uOut and not eb and not follow)
+  }
   invariant FollowOnlyWhenReported { follow => rep }
   invariant WitnessWorks { rep => pairs(wk, we) }
   invariant EarlyTraced {
@@ -126,18 +152,32 @@ spec PairingLoad {
 
   // if b { u = x } else { err = e }; return u, err: kept apart.
   reachable EdgesKeptApart {
-    pc == Returned and not reported() and uk[0] == Alloc and ek[0] == EKeep
-    and uk[1] == Nil and ek[1] == EGood and pe[0] == EKeep and pe[1] == EKeep
+    pc == Returned
+    and not reported()
+    and uk[0] == Alloc
+    and ek[0] == EKeep
+    and uk[1] == Nil
+    and ek[1] == EGood
+    and pe[0] == EKeep
+    and pe[1] == EKeep
   }
   // The earlier if stores the nil error on one arm, and a non-nil one on the
   // other: the load has two alternatives on the edge that keeps err.
   reachable EarlierStoreReported {
-    pc == Returned and reported() and follow and ek[wk] == EKeep and pe[we] == EBad
+    pc == Returned
+    and reported()
+    and follow
+    and ek[wk] == EKeep
+    and pe[we] == EBad
     and pe[1 - we] == EGood
   }
   // u from outside, nil, with the nil error: not reported. The gap.
   reachable OutsideNilIsMissed { pc == Returned and not reported() and uOut and eb }
   reachable ZeroThroughBoth {
-    pc == Returned and reported() and follow and ek[wk] == EKeep and pe[we] == EKeep
+    pc == Returned
+    and reported()
+    and follow
+    and ek[wk] == EKeep
+    and pe[we] == EKeep
   }
 }

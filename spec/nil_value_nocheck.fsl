@@ -33,14 +33,28 @@ spec NilValueNoCheck {
     pc: Pc,
     // free choice bits that pick the program in init
     ch: Map<Bit, Bool>,
-    a0: Op, b0: Op, a1: Op, b1: Op, ga: Guard, gb: Guard,
-    r: Map<Edge, Op>, g: Map<Edge, Guard>,
+    a0: Op,
+    b0: Op,
+    a1: Op,
+    b1: Op,
+    ga: Guard,
+    gb: Guard,
+    r: Map<Edge, Op>,
+    g: Map<Edge, Guard>,
     // the run
-    a: Val, b: Val, iters: Iter, rv: Val, taken: Edge,
+    a: Val,
+    b: Val,
+    iters: Iter,
+    rv: Val,
+    taken: Edge,
     // the forward runs the witness is chosen from, fixed with the program
-    fa: Map<Slot, Val>, fb: Map<Slot, Val>,
+    fa: Map<Slot, Val>,
+    fb: Map<Slot, Val>,
     // the rule's verdict and its witness, fixed with the program
-    rep: Bool, w: Edge, wnil: Bool, wrounds: Iter,
+    rep: Bool,
+    w: Edge,
+    wnil: Bool,
+    wrounds: Iter,
     // the run has made the witness's choices so far
     follow: Bool
   }
@@ -57,22 +71,44 @@ spec NilValueNoCheck {
   // start, and nothing changes it afterwards.
   init {
     pc = Ready
-    a0 = pick3(0)  b0 = pick3(2)  a1 = pick5(4)  b1 = pick5(7)
-    ga = pickGuard(10)  gb = pickGuard(12)
-    forall k: Edge { r[k] = pick5(14 + 3 * k)  g[k] = pickGuard(23 + 2 * k) }
-    a = NonNil  b = NonNil  iters = 0  rv = NonNil  taken = 0
+    a0 = pick3(0)
+    b0 = pick3(2)
+    a1 = pick5(4)
+    b1 = pick5(7)
+    ga = pickGuard(10)
+    gb = pickGuard(12)
+    forall k: Edge {
+      r[k] = pick5(14 + 3 * k)
+      g[k] = pickGuard(23 + 2 * k)
+    }
+    a = NonNil
+    b = NonNil
+    iters = 0
+    rv = NonNil
+    taken = 0
     // The forward runs, then the verdict and the witness. init assigns in
     // order, so the verdict and the witness read the runs above them. The
     // verdict reads only the program.
-    fa[0] = runA0(false)  fb[0] = runB0(false)
-    fa[4] = runA0(true)  fb[4] = runB0(true)
-    fa[1] = runA1(false)  fb[1] = runB1(false)
-    fa[5] = runA1(true)  fb[5] = runB1(true)
-    fa[2] = runA2(false)  fb[2] = runB2(false)
-    fa[6] = runA2(true)  fb[6] = runB2(true)
-    fa[3] = runA3(false)  fb[3] = runB3(false)
-    fa[7] = runA3(true)  fb[7] = runB3(true)
-    rep = reported()  w = wk()  wnil = wp()  wrounds = wi()
+    fa[0] = runA0(false)
+    fb[0] = runB0(false)
+    fa[4] = runA0(true)
+    fb[4] = runB0(true)
+    fa[1] = runA1(false)
+    fb[1] = runB1(false)
+    fa[5] = runA1(true)
+    fb[5] = runB1(true)
+    fa[2] = runA2(false)
+    fb[2] = runB2(false)
+    fa[6] = runA2(true)
+    fb[6] = runB2(true)
+    fa[3] = runA3(false)
+    fb[3] = runB3(false)
+    fa[7] = runA3(true)
+    fb[7] = runB3(true)
+    rep = reported()
+    w = wk()
+    wnil = wp()
+    wrounds = wi()
     follow = false
   }
 
@@ -97,19 +133,27 @@ spec NilValueNoCheck {
   def may(o: Op) = o == Nil or o == Ext
   def nn(o: Op) = o == Alloc or o == Ext
   def mayNilA() =
-    may(a0) or (ga != NotNil and (may(a1) or (a1 == PhiB and (may(b0) or (gb != NotNil and may(b1))))))
+    may(a0)
+    or (ga != NotNil and (may(a1) or (a1 == PhiB and (may(b0) or (gb != NotNil and may(b1))))))
   def mayNilB() =
-    may(b0) or (gb != NotNil and (may(b1) or (b1 == PhiA and (may(a0) or (ga != NotNil and may(a1))))))
+    may(b0)
+    or (gb != NotNil and (may(b1) or (b1 == PhiA and (may(a0) or (ga != NotNil and may(a1))))))
   def mayNonNilA() =
-    nn(a0) or (ga != IsNil and (nn(a1) or (a1 == PhiB and (nn(b0) or (gb != IsNil and nn(b1))))))
+    nn(a0)
+    or (ga != IsNil and (nn(a1) or (a1 == PhiB and (nn(b0) or (gb != IsNil and nn(b1))))))
   def mayNonNilB() =
-    nn(b0) or (gb != IsNil and (nn(b1) or (b1 == PhiA and (nn(a0) or (ga != IsNil and nn(a1))))))
+    nn(b0)
+    or (gb != IsNil and (nn(b1) or (b1 == PhiA and (nn(a0) or (ga != IsNil and nn(a1))))))
   def mayNil(o: Op) = may(o) or (o == PhiA and mayNilA()) or (o == PhiB and mayNilB())
   def mayNonNil(o: Op) = nn(o) or (o == PhiA and mayNonNilA()) or (o == PhiB and mayNonNilB())
   def live(c: Guard, o: Op) = (c == IsNil => mayNil(o)) and (c == NotNil => mayNonNil(o))
   def entryShape() =
-    (a0 == Nil or a0 == Alloc or a0 == Ext) and (b0 == Nil or b0 == Alloc or b0 == Ext)
-  def configOk() = live(ga, a1) and live(gb, b1) and (forall k: Edge { live(g[k], r[k]) })
+    (a0 == Nil or a0 == Alloc or a0 == Ext)
+    and (b0 == Nil or b0 == Alloc or b0 == Ext)
+  def configOk() =
+    live(ga, a1)
+    and live(gb, b1)
+    and (forall k: Edge { live(g[k], r[k]) })
 
   // --- the run's semantics --------------------------------------------------------
 
@@ -157,15 +201,20 @@ spec NilValueNoCheck {
   def wk() = if brings(0) then 0 else if brings(1) then 1 else 2
   def wp() = not (exists i: Iter { i <= 3 and okAt(wk(), false, i) })
   def wi() =
-    if okAt(wk(), wp(), 0) then 0 else if okAt(wk(), wp(), 1) then 1
-    else if okAt(wk(), wp(), 2) then 2 else 3
+    if okAt(wk(), wp(), 0) then 0
+    else if okAt(wk(), wp(), 1) then 1
+    else if okAt(wk(), wp(), 2) then 2
+    else 3
 
   // --- the run --------------------------------------------------------------------
 
   action enter(na: Bool, nb: Bool) {
-    requires pc == Ready  requires configOk()  requires not provedReported()
+    requires pc == Ready
+    requires configOk()
+    requires not provedReported()
     pc = Loop
-    a = evAt(a0, na, a, b)  b = evAt(b0, nb, a, b)
+    a = evAt(a0, na, a, b)
+    b = evAt(b0, nb, a, b)
     follow = rep and na == wnil and nb == wnil
   }
 
@@ -184,8 +233,10 @@ spec NilValueNoCheck {
   }
 
   action take(k: Edge, n: Bool) {
-    requires pc == Join  requires passes(g[k], evAt(r[k], n, a, b))
-    pc = Returned  taken = k
+    requires pc == Join
+    requires passes(g[k], evAt(r[k], n, a, b))
+    pc = Returned
+    taken = k
     rv = mark(g[k], evAt(r[k], n, a, b))
     follow = follow and k == w and n == wnil
   }
@@ -193,13 +244,12 @@ spec NilValueNoCheck {
   // No edge may pass its check. The function then panics or never returns.
   action abort() {
     requires pc == Join
-    pc = Aborted  follow = false
+    pc = Aborted
+    follow = false
   }
 
   // A program outside ASSUME-2 never runs.
   terminal { pc == Returned or pc == Aborted or (pc == Ready and not configOk()) }
-
-
 
   // --- what is proved -------------------------------------------------------------
 
@@ -217,31 +267,66 @@ spec NilValueNoCheck {
 
   // a, b = b, nil: the nil reaches a on the second round.
   reachable NilAfterTwoRounds {
-    pc == Returned and rv == NilConst and r[taken] == PhiA and a1 == PhiB and b1 == Nil
-    and ga == NoCheck and gb == NoCheck and a0 == Alloc and b0 == Alloc and iters == 2
+    pc == Returned
+    and rv == NilConst
+    and r[taken] == PhiA
+    and a1 == PhiB
+    and b1 == Nil
+    and ga == NoCheck
+    and gb == NoCheck
+    and a0 == Alloc
+    and b0 == Alloc
+    and iters == 2
   }
   // if p == nil { p = def }; return p, where p may be nil.
   reachable CheckStopsTheNil {
-    pc == Returned and not reported() and nilA() and r[0] == PhiA and g[0] == NotNil
-    and r[1] == Alloc and g[1] == NoCheck and r[2] == Alloc
+    pc == Returned
+    and not reported()
+    and nilA()
+    and r[0] == PhiA
+    and g[0] == NotNil
+    and r[1] == Alloc
+    and g[1] == NoCheck
+    and r[2] == Alloc
   }
   // for ... { if x := f(); x == nil { a = x } }: a nil checked on a loop edge.
   reachable CheckedOnALoopEdge {
-    pc == Returned and follow and ga == IsNil and a1 == Ext and r[taken] == PhiA
-    and g[taken] == NoCheck and rv == NilChecked
+    pc == Returned
+    and follow
+    and ga == IsNil
+    and a1 == Ext
+    and r[taken] == PhiA
+    and g[taken] == NoCheck
+    and rv == NilChecked
   }
   // for ... { if b != nil { a = b }; b = &T{} } with b nil on entry: the
   // check on a's loop edge stops the nil b brings.
   reachable LoopCheckStopsTheEdge {
-    pc == Returned and not reported() and ga == NotNil and a1 == PhiB and a0 == Alloc
-    and b0 == Nil and b1 == Alloc and nilB() and r[0] == PhiA and g[0] == NoCheck
+    pc == Returned
+    and not reported()
+    and ga == NotNil
+    and a1 == PhiB
+    and a0 == Alloc
+    and b0 == Nil
+    and b1 == Alloc
+    and nilB()
+    and r[0] == PhiA
+    and g[0] == NoCheck
   }
   reachable CheckedOutsideNilReported {
-    pc == Returned and reported() and r[taken] == Ext and g[taken] == IsNil and rv == NilChecked
+    pc == Returned
+    and reported()
+    and r[taken] == Ext
+    and g[taken] == IsNil
+    and rv == NilChecked
   }
   reachable CheckedPhiNilReported {
-    pc == Returned and reported() and r[taken] == PhiB and g[taken] == IsNil
-    and not nilB() and rv == NilChecked
+    pc == Returned
+    and reported()
+    and r[taken] == PhiB
+    and g[taken] == IsNil
+    and not nilB()
+    and rv == NilChecked
   }
   reachable ExtNilIsNotReported { pc == Returned and rv == NilExt and not reported() }
   // The witness runs to the return, round the loop twice, and through a check.

@@ -84,11 +84,23 @@ spec ResultZero {
     pc: Pc,
     ch: Map<Bit, Bool>,
     // the program
-    p: Map<Pre, Op>, a: Map<Edge, Op>, g: Map<Edge, Cmp>, w: Op, instr: Instr,
+    p: Map<Pre, Op>,
+    a: Map<Edge, Op>,
+    g: Map<Edge, Cmp>,
+    w: Op,
+    instr: Instr,
     // the verdict and its witness
-    rep: Bool, wk: Edge, we: Pre, wzero: Bool,
+    rep: Bool,
+    wk: Edge,
+    we: Pre,
+    wzero: Bool,
     // the run
-    pr: Val, r: Val, used: Val, passedOn: Bool, taken: Edge, follow: Bool
+    pr: Val,
+    r: Val,
+    used: Val,
+    passedOn: Bool,
+    taken: Edge,
+    follow: Bool
   }
 
   def pickPre(i: Bit) = if ch[i] then Zero else if ch[i + 1] then Built else Ext
@@ -97,7 +109,8 @@ spec ResultZero {
   def pickCmp(i: Bit) = if ch[i] then NoCmp else if ch[i + 1] then EqZero else NeZero
   def pickInstr(i: Bit) =
     if ch[i] then (if ch[i + 1] then Return else (if ch[i + 2] then Argument else ToInterface))
-    else if ch[i + 1] then (if ch[i + 2] then FieldStore else MethodCall) else Compare
+    else if ch[i + 1] then (if ch[i + 2] then FieldStore else MethodCall)
+    else Compare
 
   // --- the rule -------------------------------------------------------------------
 
@@ -124,8 +137,11 @@ spec ResultZero {
   // The value on edge k when P took edge e and every call's result is zero
   // (z) or not.
   def evOp(o: Op, old: Val, z: Bool) =
-    if o == Keep then old else if o == Zero then ZeroConst else if o == Built then NonZero
-    else if z then ZeroExt else NonZero
+    if o == Keep then old
+    else if o == Zero then ZeroConst
+    else if o == Built then NonZero
+    else if z then ZeroExt
+    else NonZero
   def onEdge(k: Edge, e: Pre, z: Bool) = evOp(a[k], evOp(p[e], NonZero, z), z)
   def passes(c: Cmp, v: Val) =
     if c == EqZero then v != NonZero else if c == NeZero then v == NonZero else true
@@ -133,7 +149,8 @@ spec ResultZero {
   def goodZero(v: Val) = v == ZeroConst or v == ZeroChecked
   // What the witness needs at J: after an overwrite, only to pass.
   def okAt(k: Edge, e: Pre, z: Bool) =
-    passes(g[k], onEdge(k, e, z)) and (w != Keep or goodZero(mark(g[k], onEdge(k, e, z))))
+    passes(g[k], onEdge(k, e, z))
+    and (w != Keep or goodZero(mark(g[k], onEdge(k, e, z))))
   def okEdge(k: Edge) = exists e: Pre { okAt(k, e, false) or okAt(k, e, true) }
   def witnessEdge() =
     if w == Keep then (if brings(0) then 0 else if brings(1) then 1 else 2)
@@ -144,18 +161,30 @@ spec ResultZero {
   init {
     pc = Ready
     forall e: Pre { p[e] = pickPre(2 * e) }
-    forall k: Edge { a[k] = pickOp(4 + 2 * k)  g[k] = pickCmp(10 + 2 * k) }
-    w = pickOp(16)  instr = pickInstr(18)
+    forall k: Edge {
+      a[k] = pickOp(4 + 2 * k)
+      g[k] = pickCmp(10 + 2 * k)
+    }
+    w = pickOp(16)
+    instr = pickInstr(18)
     // The verdict and the witness read only the program set above.
-    rep = reported()  wk = witnessEdge()  wzero = witnessZ(witnessEdge())
+    rep = reported()
+    wk = witnessEdge()
+    wzero = witnessZ(witnessEdge())
     we = witnessPre(witnessEdge(), witnessZ(witnessEdge()))
-    pr = NonZero  r = NonZero  used = NonZero  passedOn = false  taken = 0  follow = false
+    pr = NonZero
+    r = NonZero
+    used = NonZero
+    passedOn = false
+    taken = 0
+    follow = false
   }
 
   // --- the run --------------------------------------------------------------------
 
   action early(e: Pre, z: Bool) {
-    requires pc == Ready  requires configOk()
+    requires pc == Ready
+    requires configOk()
     pc = Early
     pr = evOp(p[e], NonZero, z)
     follow = rep and e == we and z == wzero
@@ -164,7 +193,8 @@ spec ResultZero {
   action arm(k: Edge, z: Bool) {
     requires pc == Early
     requires passes(g[k], evOp(a[k], pr, z))
-    pc = Joined  taken = k
+    pc = Joined
+    taken = k
     r = mark(g[k], evOp(a[k], pr, z))
     follow = follow and k == wk and z == wzero
   }
@@ -172,7 +202,8 @@ spec ResultZero {
   // No edge may pass its comparison: the function panics or never returns.
   action abort() {
     requires pc == Early
-    pc = Aborted  follow = false
+    pc = Aborted
+    follow = false
   }
 
   action use(z: Bool) {
@@ -181,8 +212,11 @@ spec ResultZero {
     used = evOp(w, r, z)
     // The run's own reading: every instruction but a comparison passes the
     // Result on; a comparison gives a bool.
-    passedOn = instr == Return or instr == Argument or instr == ToInterface
-               or instr == FieldStore or instr == MethodCall
+    passedOn = instr == Return
+               or instr == Argument
+               or instr == ToInterface
+               or instr == FieldStore
+               or instr == MethodCall
     follow = follow and not z
   }
 
@@ -205,17 +239,28 @@ spec ResultZero {
     (forall e: Pre { p[e] != Keep }) and (pc != Ready => configOk())
   }
   invariant VerdictFixed {
-    rep == reported() and wk == witnessEdge() and wzero == witnessZ(witnessEdge())
+    rep == reported()
+    and wk == witnessEdge()
+    and wzero == witnessZ(witnessEdge())
     and we == witnessPre(witnessEdge(), witnessZ(witnessEdge()))
   }
   invariant FreshBeforeRun {
-    pc == Ready => (pr == NonZero and r == NonZero and used == NonZero and not follow and not passedOn)
+    pc == Ready => (
+      pr == NonZero
+      and r == NonZero
+      and used == NonZero
+      and not follow
+      and not passedOn
+    )
   }
   invariant FollowOnlyWhenReported { follow => rep }
   invariant WitnessEdgeWorks { (rep and configOk()) => okAt(wk, we, wzero) }
   invariant EarlyTraced {
-    pc != Ready => (pr != ZeroChecked and (pr == ZeroConst => pZero())
-                    and (follow => pr == evOp(p[we], NonZero, wzero)))
+    pc != Ready => (
+      pr != ZeroChecked
+      and (pr == ZeroConst => pZero())
+      and (follow => pr == evOp(p[we], NonZero, wzero))
+    )
   }
   invariant JoinedTraced {
     (pc == Joined or pc == Done) => (
@@ -225,31 +270,52 @@ spec ResultZero {
     )
   }
   invariant UsedTraced {
-    pc == Done => ((goodZero(used) => (w == Zero or (w == Keep and goodZero(r))))
-                   and (w == Keep => used == r) and (passedOn == isUse()))
+    pc == Done => (
+      (goodZero(used) => (w == Zero or (w == Keep and goodZero(r))))
+      and (w == Keep => used == r)
+      and (passedOn == isUse())
+    )
   }
 
   // --- witnesses ------------------------------------------------------------------
 
   // var r mo.Result[T]; if c { r = mo.Ok(v) }; return r
   reachable ZeroThroughAJoin {
-    pc == Done and reported() and follow and instr == Return and p[we] == Zero
-    and a[wk] == Keep and used == ZeroConst
+    pc == Done
+    and reported()
+    and follow
+    and instr == Return
+    and p[we] == Zero
+    and a[wk] == Keep
+    and used == ZeroConst
   }
   // if r == (mo.Result[T]{}) { r = mo.Err(e) }; return r, where r may be zero
   // or built, and the edge that keeps r runs.
   reachable ComparisonStopsTheZero {
-    pc == Done and not reported() and isUse() and w == Keep and pZero()
-    and a[taken] == Keep and g[taken] == NeZero and used == NonZero
+    pc == Done
+    and not reported()
+    and isUse()
+    and w == Keep
+    and pZero()
+    and a[taken] == Keep
+    and g[taken] == NeZero
+    and used == NonZero
   }
   reachable ComparedZeroIsReported {
-    pc == Done and reported() and follow and g[wk] == EqZero and used == ZeroChecked
+    pc == Done
+    and reported()
+    and follow
+    and g[wk] == EqZero
+    and used == ZeroChecked
   }
   reachable ComparisonIsNotAUse {
     pc == Done and not reported() and instr == Compare and used == ZeroConst
   }
   reachable OverwriteBeforeUse {
-    pc == Done and not reported() and isUse() and w == Built
+    pc == Done
+    and not reported()
+    and isUse()
+    and w == Built
     and (exists k: Edge { brings(k) })
   }
   reachable WitnessAfterOverwrite { follow and pc == Done and w == Zero and g[wk] == NeZero }

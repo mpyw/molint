@@ -33,20 +33,34 @@ spec NilValueCorrelated {
     pc: Pc,
     ch: Map<Bit, Bool>,
     // the program
-    p0: Op, p1: Op, same: Bool,
+    p0: Op,
+    p1: Op,
+    same: Bool,
     // the verdict: which edge brings the nil
-    rep: Bool, wc: Bool,
+    rep: Bool,
+    wc: Bool,
     // the run
-    c: Bool, p: Val, returnedP: Bool, rv: Val, follow: Bool
+    c: Bool,
+    p: Val,
+    returnedP: Bool,
+    rv: Val,
+    follow: Bool
   }
 
   def pick(i: Bit) = if ch[i] then Nil else if ch[i + 1] then Alloc else Ext
 
   init {
     pc = Ready
-    p0 = pick(0)  p1 = pick(2)  same = ch[4]
-    rep = reported()  wc = p0 != Nil
-    c = false  p = NonNil  returnedP = false  rv = NonNil  follow = false
+    p0 = pick(0)
+    p1 = pick(2)
+    same = ch[4]
+    rep = reported()
+    wc = p0 != Nil
+    c = false
+    p = NonNil
+    returnedP = false
+    rv = NonNil
+    follow = false
   }
 
   // The rule of nil_value.fsl: a φ-node is a nil value when an edge brings
@@ -58,7 +72,8 @@ spec NilValueCorrelated {
 
   action branch(cond: Bool, nilOut: Bool) {
     requires pc == Ready
-    pc = Joined  c = cond
+    pc = Joined
+    c = cond
     p = if cond then ev(p1, nilOut) else ev(p0, nilOut)
     follow = rep and cond == wc and not nilOut
   }
@@ -67,7 +82,8 @@ spec NilValueCorrelated {
   action second(d: Bool) {
     requires pc == Joined
     requires same => d == c
-    pc = Returned  returnedP = d
+    pc = Returned
+    returnedP = d
     rv = if d then p else NonNil
     follow = follow and d
   }
