@@ -68,7 +68,7 @@ These are not regressions. Each fails on the named invariant, and `verify.sh` pi
 
 ### Naive: a rejected rule
 
-The counterexample is the reason the rule was rejected. A naive spec that over-reports runs only programs the proved rule does not report, so the report is the naive rule's own. Its checks can all succeed and fail, so the edge the witness is blocked on is a live one.
+The counterexample is the reason the rule was rejected. A naive spec that over-reports runs only programs the proved rule does not report, so the report is the naive rule's own. Each of its checks can pass on some run, so the edge the witness is blocked on is a live one.
 
 | Spec | Rule it models | Counterexample fslc finds | Breaks |
 | --- | --- | --- | --- |

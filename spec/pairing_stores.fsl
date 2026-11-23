@@ -1,443 +1,510 @@
-// Pairing along stores: return-nil for a bare return that loads its results.
-// See "return-nil" in design/rules.md.
+// Pairing along stores: return-nil for a bare return that loads its
+// results. See "return-nil" in design/rules.md.
 //
-// A function with a defer stores its results into local variables, runs its
-// defers, then loads them. A bare return stores nothing, so both loads follow
-// the stores reaching them. The pointer and the error are paired along each
-// path back to those stores: both results are read on the same path. The two
-// stored values are then paired again, since they may be φ-nodes of one
-// earlier block. This is what internal/flow/pair.go (pairStores, then pair)
-// does.
+// A function with a defer stores its results into local variables, runs
+// its defers, then loads them. A bare return stores nothing, so both loads
+// follow the stores that reach them. The pointer and the error are paired
+// along each path back to those stores, so both results are read on the
+// same path. The two stored values are then paired again, since they may be
+// φ-nodes of one earlier block. internal/flow/pair.go does this, with
+// pairStores and then pair.
 //
 // The program:
 //
 //   func F() (u *T, err error) {  each Alloc is a store of the zero value
 //     defer mu.Unlock()
 //     if b { x, e = PX0, PY0 } else { x, e = PX1, PY1 }   an earlier join P
-//     u = U0; err = E0            each may be left out
+//     u = U0                      either store may be left out
+//     err = E0
 //     for ... {                   the loop is there or not (looped)
-//       if c {                    two arms; each may store into u, into
+//       if c {                    two arms. Each may store into u, into
 //         u, err = ...            err, into both, or into neither
 //       } else { ... }
 //     }
-//     u = AU; err = AE            a store between the loop and the return;
-//                                 each may be left out, or store x or e
+//     u = AU                      stores between the loop and the return.
+//     err = AE                    Either may be left out, or store x or e
 //     return                      loads u and err
 //   }
 //
+// In the state, PX and PY are earlierX and earlierE. U0 and E0 are
+// entryPointer and entryError. The arms' stores are armPointer and
+// armError. AU and AE are afterPointer and afterError.
+//
 // The stores into u are nil, &T{} or f(). The stores into err are Bad (the
 // nil constant), Good (errors.New) or Out (f()). With a trailing bool in
-// place of the error, Bad is `true`, Good is `false`, and the zero of the
-// Alloc is Good rather than Bad (isBool).
+// place of the error, Bad is `true` and Good is `false`. The Alloc's zero
+// is then Good rather than Bad (trailingBool).
 //
-// `if b { x, e = nil, errX } else { x, e = get(), nil }; u, err = x, e;
-// return` is this shape: the stored values are φ-nodes of P, paired along
-// P's edges, and it is not reported.
+// This program has the shape, and it is not reported. The stored values
+// are φ-nodes of P, paired along P's edges:
 //
-// The rule, reported below: some path back from the return meets, for each
-// result, a last store that is a nil constant (or the zero) and a Bad
-// constant, and when both stored values come from P, along one edge of P.
-// Without the loop a path goes through one arm. With it, any number, and the
-// last stores of u and err may come from different rounds. Two rounds are
-// enough to reach any such pair: the round of one result's last store, then
-// the other's.
+//   if b { x, e = nil, errX } else { x, e = get(), nil }
+//   u, err = x, e
+//   return
 //
-// The run keeps its own record of each result: whether it holds the nil
-// constant (uv), whether it holds the Bad constant (eb), and whether it holds
-// a nil from outside (uOut). The rule never reads them.
+// The rule, reported below, needs some path back from the return. On it,
+// the last store of u is a nil constant or the zero. The last store of err
+// is a Bad constant. When both stored values come from P, they are read
+// along one edge of P. Without the loop, a path goes through one arm. With
+// it, a path goes through any number, and the last stores of u and err may
+// come from different rounds. Two rounds are enough to reach any such pair:
+// the round of one result's last store, then the other's.
+//
+// The run keeps its own record of each result. It notes whether u holds
+// the nil constant (pointerIsNil) or a nil from outside
+// (pointerIsOutsideNil). It notes whether err holds the Bad constant
+// (errorIsBad). The rule never reads them.
 //
 // The claim:
 //
-//   ReportMeansNilWithBad   when reported, the witness run is never blocked,
-//                           and returns the nil constant with a Bad constant
+//   WitnessNeverBlocked     each round and the exit that the witness takes
+//                           are enabled
+//   ReportMeansNilWithBad   when reported, the witness run returns the nil
+//                           constant with a Bad constant
 //   NilWithBadIsReported    whenever a run returns them, it is reported
 //
 // ASSUME-1: branches and the loop are taken as independent, as the rule
-//   defines. The gap when they correlate: nil_value_correlated.fsl.
-// ASSUME-2: nothing but loads and stores uses u or err. An escaped result is
-//   not followed; local_store.fsl covers that. A literal that only loads
-//   them keeps them followed.
+//   defines. The gap when they correlate is nil_value_correlated.fsl.
+// ASSUME-2: nothing but loads and stores uses u or err. An escaped result
+//   is not followed, and local_store.fsl covers that. A literal that only
+//   loads them keeps them followed.
 // ASSUME-3 (representation only): the stores are constants, values from
-//   outside, or x and e. Nil checks on the way are nil_value.fsl's and
-//   pairing.fsl's subject; on a loaded variable they are a gap (local_store.fsl
-//   ASSUME-3).
+//   outside, or x and e. Nil checks on the way are the subject of
+//   nil_value.fsl and pairing.fsl. On a loaded variable they are a gap
+//   (local_store.fsl ASSUME-3).
 fsl 5
 spec PairingStores {
-  enum UStore { UKeep, UNil, UAlloc, UExt, UFromP }
-  enum EStore { EKeep, EBad, EGood, EOut, EFromP }
-  enum Pc { Ready, Joined, Loop, Left, Returned }
-  // An arm, or 2: no arm (the entry's store, or no round at all).
-  type Step = 0..2
+  // NoPointerStore and NoErrorStore: no store of that result. At the entry
+  // they stand for the Alloc's zero. PointerFromX and ErrorFromE store x
+  // and e, the φ-nodes of P.
+  enum PointerStore { NoPointerStore, PointerNil, PointerNonNil, PointerOutside, PointerFromX }
+  enum ErrorStore { NoErrorStore, ErrorBad, ErrorGood, ErrorOutside, ErrorFromE }
+  enum Phase { Ready, Joined, InLoop, LeftLoop, Returned }
+  // An arm, or 2 for no arm: the entry's store, or no round at all.
+  type ArmOrNone = 0..2
   type Arm = 0..1
-  type Pre = 0..1
+  type EarlierEdge = 0..1
   type Rounds = 0..2
-  type Bit = 0..27
+  type ChoiceBit = 0..27
 
   state {
-    pc: Pc,
-    ch: Map<Bit, Bool>,
+    phase: Phase,
+    choice: Map<ChoiceBit, Bool>,
     // the program
-    px: Map<Pre, UStore>,
-    py: Map<Pre, EStore>,
-    u0: UStore,
-    e0: EStore,
-    us: Map<Arm, UStore>,
-    es: Map<Arm, EStore>,
-    au: UStore,
-    ae: EStore,
+    earlierX: Map<EarlierEdge, PointerStore>,
+    earlierE: Map<EarlierEdge, ErrorStore>,
+    entryPointer: PointerStore,
+    entryError: ErrorStore,
+    armPointer: Map<Arm, PointerStore>,
+    armError: Map<Arm, ErrorStore>,
+    afterPointer: PointerStore,
+    afterError: ErrorStore,
     looped: Bool,
-    isBool: Bool,
+    trailingBool: Bool,
     // the verdict and its witness path
-    rep: Bool,
-    wx: Step,
-    wy: Step,
-    we: Pre,
-    // the run: which store each result holds, and which came last
-    uSrc: Step,
-    eSrc: Step,
-    uLater: Bool,
-    lastArm: Step,
+    verdict: Bool,
+    witnessFirstArm: ArmOrNone,
+    witnessLaterArm: ArmOrNone,
+    witnessEarlierEdge: EarlierEdge,
+    // the run: which arm's store each result holds, and which came last
+    pointerArm: ArmOrNone,
+    errorArm: ArmOrNone,
+    pointerStoredLater: Bool,
+    lastArm: ArmOrNone,
     rounds: Rounds,
-    taken: Pre,
+    earlierEdgeTaken: EarlierEdge,
     // the run's own record of the values
-    xNil: Bool,
-    xOut: Bool,
-    eBadP: Bool,
-    uv: Bool,
-    uOut: Bool,
-    eb: Bool,
-    follow: Bool
+    xIsNil: Bool,
+    xIsOutsideNil: Bool,
+    eIsBad: Bool,
+    pointerIsNil: Bool,
+    pointerIsOutsideNil: Bool,
+    errorIsBad: Bool,
+    onWitness: Bool
   }
 
-  def pickU(i: Bit) =
-    if ch[i] then (if ch[i + 1] then UKeep else UNil) else (if ch[i + 1] then UAlloc else UExt)
-  def pickE(i: Bit) =
-    if ch[i] then (if ch[i + 1] then EKeep else EBad) else (if ch[i + 1] then EGood else EOut)
-  def pickPU(i: Bit) = if ch[i] then UNil else if ch[i + 1] then UAlloc else UExt
-  def pickPE(i: Bit) = if ch[i] then EBad else if ch[i + 1] then EGood else EOut
-  def pickAU(i: Bit) = if ch[i] then pickU(i + 1) else UFromP
-  def pickAE(i: Bit) = if ch[i] then pickE(i + 1) else EFromP
+  def pickPointerStore(bit: ChoiceBit) =
+    if choice[bit] then (if choice[bit + 1] then NoPointerStore else PointerNil)
+    else (if choice[bit + 1] then PointerNonNil else PointerOutside)
+  def pickErrorStore(bit: ChoiceBit) =
+    if choice[bit] then (if choice[bit + 1] then NoErrorStore else ErrorBad)
+    else (if choice[bit + 1] then ErrorGood else ErrorOutside)
+  def pickEarlierPointer(bit: ChoiceBit) =
+    if choice[bit] then PointerNil else if choice[bit + 1] then PointerNonNil else PointerOutside
+  def pickEarlierError(bit: ChoiceBit) =
+    if choice[bit] then ErrorBad else if choice[bit + 1] then ErrorGood else ErrorOutside
+  def pickAfterPointer(bit: ChoiceBit) =
+    if choice[bit] then pickPointerStore(bit + 1) else PointerFromX
+  def pickAfterError(bit: ChoiceBit) =
+    if choice[bit] then pickErrorStore(bit + 1) else ErrorFromE
 
   // --- the rule -------------------------------------------------------------------
 
-  // What a store gives. UKeep and EKeep at the entry stand for the Alloc's zero.
-  def uNil(s: UStore) = s == UKeep or s == UNil
-  def eBad(s: EStore) = s == EBad or (s == EKeep and not isBool)
-  // The last store of each result on the path x, then y, then the store after
-  // the loop; x and e from P are read along P's edge p.
-  def loopU(x: Step, y: Step) =
-    if y != 2 and us[y] != UKeep then us[y]
-    else if x != 2 and us[x] != UKeep then us[x]
-    else u0
-  def loopE(x: Step, y: Step) =
-    if y != 2 and es[y] != EKeep then es[y]
-    else if x != 2 and es[x] != EKeep then es[x]
-    else e0
-  def finU(x: Step, y: Step, p: Pre) =
-    if au == UFromP then px[p] else if au != UKeep then au else loopU(x, y)
-  def finE(x: Step, y: Step, p: Pre) =
-    if ae == EFromP then py[p] else if ae != EKeep then ae else loopE(x, y)
-  def path(x: Step, y: Step) = if looped then (x == 2 => y == 2) else (x != 2 and y == 2)
-  def pairs(x: Step, y: Step, p: Pre) = path(x, y) and uNil(finU(x, y, p)) and eBad(finE(x, y, p))
-  def pairsAt(x: Step, y: Step) = exists p: Pre { pairs(x, y, p) }
-  def reported() = exists x: Step { exists y: Step { pairsAt(x, y) } }
+  // What a store gives. At the entry, NoPointerStore and NoErrorStore stand
+  // for the Alloc's zero.
+  def pointerStoreIsNil(store: PointerStore) = store == NoPointerStore or store == PointerNil
+  def errorStoreIsBad(store: ErrorStore) =
+    store == ErrorBad or (store == NoErrorStore and not trailingBool)
+  // The last store of each result on the path: the arm first, then the arm
+  // later, then the store after the loop. The values x and e from P are
+  // read along P's edge.
+  def loopPointerStore(first: ArmOrNone, later: ArmOrNone) =
+    if later != 2 and armPointer[later] != NoPointerStore then armPointer[later]
+    else if first != 2 and armPointer[first] != NoPointerStore then armPointer[first]
+    else entryPointer
+  def loopErrorStore(first: ArmOrNone, later: ArmOrNone) =
+    if later != 2 and armError[later] != NoErrorStore then armError[later]
+    else if first != 2 and armError[first] != NoErrorStore then armError[first]
+    else entryError
+  def lastPointerStore(first: ArmOrNone, later: ArmOrNone, edge: EarlierEdge) =
+    if afterPointer == PointerFromX then earlierX[edge]
+    else if afterPointer != NoPointerStore then afterPointer
+    else loopPointerStore(first, later)
+  def lastErrorStore(first: ArmOrNone, later: ArmOrNone, edge: EarlierEdge) =
+    if afterError == ErrorFromE then earlierE[edge]
+    else if afterError != NoErrorStore then afterError
+    else loopErrorStore(first, later)
+  def isPath(first: ArmOrNone, later: ArmOrNone) =
+    if looped then (first == 2 => later == 2) else (first != 2 and later == 2)
+  def pairs(first: ArmOrNone, later: ArmOrNone, edge: EarlierEdge) =
+    isPath(first, later)
+    and pointerStoreIsNil(lastPointerStore(first, later, edge))
+    and errorStoreIsBad(lastErrorStore(first, later, edge))
+  def pairsOnPath(first: ArmOrNone, later: ArmOrNone) =
+    exists edge: EarlierEdge { pairs(first, later, edge) }
+  def reported() = exists first: ArmOrNone { exists later: ArmOrNone { pairsOnPath(first, later) } }
 
-  def firstX() =
-    if exists y: Step { pairsAt(0, y) } then 0
-    else if exists y: Step { pairsAt(1, y) } then 1
+  def firstArmOfPath() =
+    if exists later: ArmOrNone { pairsOnPath(0, later) } then 0
+    else if exists later: ArmOrNone { pairsOnPath(1, later) } then 1
     else 2
-  def firstY(x: Step) = if pairsAt(x, 0) then 0 else if pairsAt(x, 1) then 1 else 2
-  def firstP(x: Step, y: Step) = if pairs(x, y, 0) then 0 else 1
-  def len(x: Step, y: Step) = (if x != 2 then 1 else 0) + (if y != 2 then 1 else 0)
+  def laterArmOfPath(first: ArmOrNone) =
+    if pairsOnPath(first, 0) then 0 else if pairsOnPath(first, 1) then 1 else 2
+  def earlierEdgeOfPath(first: ArmOrNone, later: ArmOrNone) = if pairs(first, later, 0) then 0 else 1
+  def pathLength(first: ArmOrNone, later: ArmOrNone) =
+    (if first != 2 then 1 else 0) + (if later != 2 then 1 else 0)
 
   init {
-    pc = Ready
-    forall p: Pre {
-      px[p] = pickPU(4 * p)
-      py[p] = pickPE(4 * p + 2)
+    phase = Ready
+    forall edge: EarlierEdge {
+      earlierX[edge] = pickEarlierPointer(4 * edge)
+      earlierE[edge] = pickEarlierError(4 * edge + 2)
     }
-    u0 = pickU(8)
-    e0 = pickE(10)
-    forall k: Arm {
-      us[k] = pickU(12 + 4 * k)
-      es[k] = pickE(14 + 4 * k)
+    entryPointer = pickPointerStore(8)
+    entryError = pickErrorStore(10)
+    forall arm: Arm {
+      armPointer[arm] = pickPointerStore(12 + 4 * arm)
+      armError[arm] = pickErrorStore(14 + 4 * arm)
     }
-    au = pickAU(20)
-    ae = pickAE(23)
-    looped = ch[26]
-    isBool = ch[27]
+    afterPointer = pickAfterPointer(20)
+    afterError = pickAfterError(23)
+    looped = choice[26]
+    trailingBool = choice[27]
     // The verdict and the witness read only the program set above.
-    rep = reported()
-    wx = firstX()
-    wy = firstY(firstX())
-    we = firstP(firstX(), firstY(firstX()))
-    uSrc = 2
-    eSrc = 2
-    uLater = false
+    verdict = reported()
+    witnessFirstArm = firstArmOfPath()
+    witnessLaterArm = laterArmOfPath(firstArmOfPath())
+    witnessEarlierEdge = earlierEdgeOfPath(firstArmOfPath(), laterArmOfPath(firstArmOfPath()))
+    pointerArm = 2
+    errorArm = 2
+    pointerStoredLater = false
     lastArm = 2
     rounds = 0
-    taken = 0
-    xNil = false
-    xOut = false
-    eBadP = false
-    uv = true
-    uOut = false
-    eb = not isBool
-    follow = false
+    earlierEdgeTaken = 0
+    xIsNil = false
+    xIsOutsideNil = false
+    eIsBad = false
+    pointerIsNil = true
+    pointerIsOutsideNil = false
+    errorIsBad = not trailingBool
+    onWitness = false
   }
 
   // --- the run --------------------------------------------------------------------
 
-  // The run's own reading of a store: nil constant, nil from outside, Bad.
-  def storesNil(s: UStore, old: Bool) = if s == UKeep then old else s == UNil
-  def storesOut(s: UStore, n: Bool, old: Bool) = if s == UKeep then old else (s == UExt and n)
-  def storesBad(s: EStore, old: Bool) = if s == EKeep then old else s == EBad
+  // The run's own reading of a store: the nil constant, a nil from outside,
+  // or Bad.
+  def recordNil(store: PointerStore, previous: Bool) =
+    if store == NoPointerStore then previous else store == PointerNil
+  def recordOutsideNil(store: PointerStore, outsideNil: Bool, previous: Bool) =
+    if store == NoPointerStore then previous else (store == PointerOutside and outsideNil)
+  def recordBad(store: ErrorStore, previous: Bool) =
+    if store == NoErrorStore then previous else store == ErrorBad
 
-  action passP(p: Pre, n: Bool) {
-    requires pc == Ready
-    pc = Joined
-    taken = p
-    xNil = px[p] == UNil
-    xOut = px[p] == UExt and n
-    eBadP = py[p] == EBad
-    follow = rep and p == we and not n
+  action passEarlierIf(edge: EarlierEdge, outsideNil: Bool) {
+    requires phase == Ready
+    phase = Joined
+    earlierEdgeTaken = edge
+    xIsNil = earlierX[edge] == PointerNil
+    xIsOutsideNil = earlierX[edge] == PointerOutside and outsideNil
+    eIsBad = earlierE[edge] == ErrorBad
+    onWitness = verdict and edge == witnessEarlierEdge and not outsideNil
   }
 
-  action enter(n: Bool) {
-    requires pc == Joined
-    pc = Loop
-    uv = storesNil(u0, uv)
-    uOut = storesOut(u0, n, uOut)
-    eb = storesBad(e0, eb)
-    follow = follow and not n
+  action enter(outsideNil: Bool) {
+    requires phase == Joined
+    phase = InLoop
+    pointerIsNil = recordNil(entryPointer, pointerIsNil)
+    pointerIsOutsideNil = recordOutsideNil(entryPointer, outsideNil, pointerIsOutsideNil)
+    errorIsBad = recordBad(entryError, errorIsBad)
+    onWitness = onWitness and not outsideNil
   }
 
-  action round(k: Arm, n: Bool) {
-    requires pc == Loop
+  action round(arm: Arm, outsideNil: Bool) {
+    requires phase == InLoop
     requires looped or rounds == 0
-    uv = storesNil(us[k], uv)
-    uOut = storesOut(us[k], n, uOut)
-    eb = storesBad(es[k], eb)
-    uSrc = if us[k] != UKeep then k else uSrc
-    eSrc = if es[k] != EKeep then k else eSrc
-    uLater = if us[k] != UKeep and es[k] == EKeep then true
-             else if es[k] != EKeep then false else uLater
-    lastArm = k
+    pointerIsNil = recordNil(armPointer[arm], pointerIsNil)
+    pointerIsOutsideNil = recordOutsideNil(armPointer[arm], outsideNil, pointerIsOutsideNil)
+    errorIsBad = recordBad(armError[arm], errorIsBad)
+    pointerArm = if armPointer[arm] != NoPointerStore then arm else pointerArm
+    errorArm = if armError[arm] != NoErrorStore then arm else errorArm
+    pointerStoredLater = if armPointer[arm] != NoPointerStore and armError[arm] == NoErrorStore then true
+                         else if armError[arm] != NoErrorStore then false
+                         else pointerStoredLater
+    lastArm = arm
     rounds = min(rounds + 1, 2)
-    follow = follow
-             and rounds < len(wx, wy)
-             and (if rounds == 0 then k == wx else k == wy)
-             and not n
+    onWitness = onWitness
+                and rounds < pathLength(witnessFirstArm, witnessLaterArm)
+                and (if rounds == 0 then arm == witnessFirstArm else arm == witnessLaterArm)
+                and not outsideNil
   }
 
   action leave() {
-    requires pc == Loop
+    requires phase == InLoop
     requires looped or rounds == 1
-    pc = Left
-    follow = follow and rounds == len(wx, wy)
+    phase = LeftLoop
+    onWitness = onWitness and rounds == pathLength(witnessFirstArm, witnessLaterArm)
   }
 
   // The store after the loop, then the bare return's loads.
-  action ret(n: Bool) {
-    requires pc == Left
-    pc = Returned
-    uv = if au == UFromP then xNil else storesNil(au, uv)
-    uOut = if au == UFromP then xOut else storesOut(au, n, uOut)
-    eb = if ae == EFromP then eBadP else storesBad(ae, eb)
-    follow = follow and not n
+  action bareReturn(outsideNil: Bool) {
+    requires phase == LeftLoop
+    phase = Returned
+    pointerIsNil = if afterPointer == PointerFromX then xIsNil
+                   else recordNil(afterPointer, pointerIsNil)
+    pointerIsOutsideNil = if afterPointer == PointerFromX then xIsOutsideNil
+                          else recordOutsideNil(afterPointer, outsideNil, pointerIsOutsideNil)
+    errorIsBad = if afterError == ErrorFromE then eIsBad else recordBad(afterError, errorIsBad)
+    onWitness = onWitness and not outsideNil
   }
 
-  terminal { pc == Returned }
+  terminal { phase == Returned }
 
   // --- what is proved -------------------------------------------------------------
 
-  // Never blocked: each round and the exit the witness takes are enabled.
+  // Never blocked: each round and the exit that the witness takes are
+  // enabled.
   invariant WitnessNeverBlocked {
-    (follow and pc == Loop) => (
-      (rounds < len(wx, wy) => (looped or rounds == 0))
-      and (rounds == len(wx, wy) => (looped or rounds == 1))
+    (onWitness and phase == InLoop) => (
+      (rounds < pathLength(witnessFirstArm, witnessLaterArm) => (looped or rounds == 0))
+      and (rounds == pathLength(witnessFirstArm, witnessLaterArm) => (looped or rounds == 1))
     )
   }
-  invariant ReportMeansNilWithBad { (follow and pc == Returned) => (uv and eb) }
-  invariant NilWithBadIsReported { (pc == Returned and uv and eb) => reported() }
+  invariant ReportMeansNilWithBad {
+    (onWitness and phase == Returned) => (pointerIsNil and errorIsBad)
+  }
+  invariant NilWithBadIsReported {
+    (phase == Returned and pointerIsNil and errorIsBad) => reported()
+  }
 
   // --- auxiliary ------------------------------------------------------------------
 
-  def curU() = if uSrc == 2 then u0 else us[uSrc]
-  def curE() = if eSrc == 2 then e0 else es[eSrc]
+  def heldPointerStore() = if pointerArm == 2 then entryPointer else armPointer[pointerArm]
+  def heldErrorStore() = if errorArm == 2 then entryError else armError[errorArm]
   // The path of at most two arms that gives what the run holds: the arm of
   // the earlier last store, then the later one.
-  def sx() =
-    if uSrc == 2 and eSrc == 2 then lastArm
-    else if uSrc == 2 then eSrc
-    else if eSrc == 2 or uSrc == eSrc then uSrc
-    else (if uLater then eSrc else uSrc)
-  def sy() = if uSrc == 2 or eSrc == 2 or uSrc == eSrc then 2 else (if uLater then uSrc else eSrc)
+  def heldFirstArm() =
+    if pointerArm == 2 and errorArm == 2 then lastArm
+    else if pointerArm == 2 then errorArm
+    else if errorArm == 2 or pointerArm == errorArm then pointerArm
+    else (if pointerStoredLater then errorArm else pointerArm)
+  def heldLaterArm() =
+    if pointerArm == 2 or errorArm == 2 or pointerArm == errorArm then 2
+    else (if pointerStoredLater then pointerArm else errorArm)
 
   invariant ProgramShape {
-    (forall p: Pre { px[p] != UKeep and px[p] != UFromP and py[p] != EKeep and py[p] != EFromP })
-    and u0 != UFromP
-    and e0 != EFromP
-    and (forall k: Arm { us[k] != UFromP and es[k] != EFromP })
+    (forall edge: EarlierEdge {
+      earlierX[edge] != NoPointerStore
+      and earlierX[edge] != PointerFromX
+      and earlierE[edge] != NoErrorStore
+      and earlierE[edge] != ErrorFromE
+    })
+    and entryPointer != PointerFromX
+    and entryError != ErrorFromE
+    and (forall arm: Arm { armPointer[arm] != PointerFromX and armError[arm] != ErrorFromE })
   }
   invariant VerdictFixed {
-    rep == reported()
-    and wx == firstX()
-    and wy == firstY(firstX())
-    and we == firstP(firstX(), firstY(firstX()))
+    verdict == reported()
+    and witnessFirstArm == firstArmOfPath()
+    and witnessLaterArm == laterArmOfPath(firstArmOfPath())
+    and witnessEarlierEdge == earlierEdgeOfPath(firstArmOfPath(), laterArmOfPath(firstArmOfPath()))
   }
   invariant FreshBeforeRun {
-    (pc == Ready or pc == Joined) => (
-      uSrc == 2
-      and eSrc == 2
+    (phase == Ready or phase == Joined) => (
+      pointerArm == 2
+      and errorArm == 2
       and lastArm == 2
       and rounds == 0
-      and uv
-      and not uOut
-      and eb == not isBool
+      and pointerIsNil
+      and not pointerIsOutsideNil
+      and errorIsBad == not trailingBool
     )
   }
-  invariant FreshBeforeP { pc == Ready => (not follow and not xNil and not xOut and not eBadP) }
-  invariant FollowOnlyWhenReported { follow => rep }
-  invariant WitnessPath { rep => pairs(wx, wy, we) }
+  invariant FreshBeforeP {
+    phase == Ready => (not onWitness and not xIsNil and not xIsOutsideNil and not eIsBad)
+  }
+  invariant FollowOnlyWhenReported { onWitness => verdict }
+  invariant WitnessPath { verdict => pairs(witnessFirstArm, witnessLaterArm, witnessEarlierEdge) }
   invariant PTraced {
-    pc != Ready => (
-      xNil == (px[taken] == UNil)
-      and eBadP == (py[taken] == EBad)
-      and (xOut => px[taken] == UExt)
-      and (follow => (taken == we and not xOut))
+    phase != Ready => (
+      xIsNil == (earlierX[earlierEdgeTaken] == PointerNil)
+      and eIsBad == (earlierE[earlierEdgeTaken] == ErrorBad)
+      and (xIsOutsideNil => earlierX[earlierEdgeTaken] == PointerOutside)
+      and (onWitness => (earlierEdgeTaken == witnessEarlierEdge and not xIsOutsideNil))
     )
   }
   // The run's record agrees with the rule's reading of the store it holds.
   invariant RecordMatchesStore {
-    (pc == Loop or pc == Left) => (
-      uv == uNil(curU())
-      and eb == eBad(curE())
-      and (uOut => curU() == UExt)
+    (phase == InLoop or phase == LeftLoop) => (
+      pointerIsNil == pointerStoreIsNil(heldPointerStore())
+      and errorIsBad == errorStoreIsBad(heldErrorStore())
+      and (pointerIsOutsideNil => heldPointerStore() == PointerOutside)
     )
   }
   invariant WitnessInOrder {
-    (follow and (pc == Loop or pc == Left)) => (
-      rounds <= len(wx, wy)
-      and (rounds == 1 => (curU() == loopU(wx, 2) and curE() == loopE(wx, 2)))
-      and (rounds == 2 => (curU() == loopU(wx, wy) and curE() == loopE(wx, wy)))
-      and (pc == Left => rounds == len(wx, wy))
-      and (rounds == 0 => (curU() == u0 and curE() == e0))
-      and (curU() == UExt => not uOut)
+    (onWitness and (phase == InLoop or phase == LeftLoop)) => (
+      rounds <= pathLength(witnessFirstArm, witnessLaterArm)
+      and (rounds == 1 => (
+        heldPointerStore() == loopPointerStore(witnessFirstArm, 2)
+        and heldErrorStore() == loopErrorStore(witnessFirstArm, 2)))
+      and (rounds == 2 => (
+        heldPointerStore() == loopPointerStore(witnessFirstArm, witnessLaterArm)
+        and heldErrorStore() == loopErrorStore(witnessFirstArm, witnessLaterArm)))
+      and (phase == LeftLoop => rounds == pathLength(witnessFirstArm, witnessLaterArm))
+      and (rounds == 0 => (heldPointerStore() == entryPointer and heldErrorStore() == entryError))
+      and (heldPointerStore() == PointerOutside => not pointerIsOutsideNil)
     )
   }
   invariant Realizable {
-    (pc == Loop or pc == Left) => (
-      curU() == loopU(sx(), sy())
-      and curE() == loopE(sx(), sy())
-      and ((pc == Left or rounds >= 1) => path(sx(), sy()))
+    (phase == InLoop or phase == LeftLoop) => (
+      heldPointerStore() == loopPointerStore(heldFirstArm(), heldLaterArm())
+      and heldErrorStore() == loopErrorStore(heldFirstArm(), heldLaterArm())
+      and ((phase == LeftLoop or rounds >= 1) => isPath(heldFirstArm(), heldLaterArm()))
     )
   }
   invariant LastArmKeptBoth {
     (rounds >= 1 => lastArm != 2)
     and (rounds == 0 => lastArm == 2)
-    and ((uSrc == 2 and eSrc == 2 and lastArm != 2) => (us[lastArm] == UKeep and es[lastArm] == EKeep))
+    and ((pointerArm == 2 and errorArm == 2 and lastArm != 2) =>
+          (armPointer[lastArm] == NoPointerStore and armError[lastArm] == NoErrorStore))
   }
   invariant SourcesStore {
-    (uSrc != 2 => us[uSrc] != UKeep)
-    and (eSrc != 2 => es[eSrc] != EKeep)
-    and ((uSrc == 2 and eSrc != 2) => us[eSrc] == UKeep)
-    and ((eSrc == 2 and uSrc != 2) => es[uSrc] == EKeep)
-    and ((uSrc != 2 and eSrc != 2 and uSrc != eSrc) =>
-          (if uLater then es[uSrc] == EKeep else us[eSrc] == UKeep))
+    (pointerArm != 2 => armPointer[pointerArm] != NoPointerStore)
+    and (errorArm != 2 => armError[errorArm] != NoErrorStore)
+    and ((pointerArm == 2 and errorArm != 2) => armPointer[errorArm] == NoPointerStore)
+    and ((errorArm == 2 and pointerArm != 2) => armError[pointerArm] == NoErrorStore)
+    and ((pointerArm != 2 and errorArm != 2 and pointerArm != errorArm) =>
+          (if pointerStoredLater then armError[pointerArm] == NoErrorStore
+           else armPointer[errorArm] == NoPointerStore))
   }
   invariant OneArmUnlessLooped {
     not looped => (
       rounds <= 1
-      and (uSrc == 2 or eSrc == 2 or uSrc == eSrc)
-      and ((pc == Left or pc == Returned) => rounds == 1)
+      and (pointerArm == 2 or errorArm == 2 or pointerArm == errorArm)
+      and ((phase == LeftLoop or phase == Returned) => rounds == 1)
     )
   }
   invariant ZeroRoundsHoldTheEntry {
-    ((pc == Loop or pc == Left or pc == Returned) and rounds == 0) => (uSrc == 2 and eSrc == 2)
+    ((phase == InLoop or phase == LeftLoop or phase == Returned) and rounds == 0) =>
+      (pointerArm == 2 and errorArm == 2)
   }
   invariant ReturnedTraced {
-    pc == Returned => (
-      (uv => uNil(finU(sx(), sy(), taken)))
-      and (eb => eBad(finE(sx(), sy(), taken)))
-      and path(sx(), sy())
+    phase == Returned => (
+      (pointerIsNil => pointerStoreIsNil(lastPointerStore(heldFirstArm(), heldLaterArm(), earlierEdgeTaken)))
+      and (errorIsBad => errorStoreIsBad(lastErrorStore(heldFirstArm(), heldLaterArm(), earlierEdgeTaken)))
+      and isPath(heldFirstArm(), heldLaterArm())
     )
   }
 
   // --- witnesses ------------------------------------------------------------------
 
-  def noStoreAfterLoop() = au == UKeep and ae == EKeep
-  def storesBothFromP() = au == UFromP and ae == EFromP
+  def noStoreAfterLoop() = afterPointer == NoPointerStore and afterError == NoErrorStore
+  def storesBothFromEarlier() = afterPointer == PointerFromX and afterError == ErrorFromE
 
-  // if c { u = x } else { err = e }; return: each path stores one result.
+  // `if c { u = x } else { err = e }; return`. Each path stores one result.
   reachable ArmsKeptApart {
-    pc == Returned
+    phase == Returned
     and not reported()
     and not looped
-    and not isBool
-    and u0 == UKeep
-    and e0 == EKeep
+    and not trailingBool
+    and entryPointer == NoPointerStore
+    and entryError == NoErrorStore
     and noStoreAfterLoop()
-    and us[0] == UAlloc
-    and es[0] == EKeep
-    and us[1] == UKeep
-    and es[1] == EGood
+    and armPointer[0] == PointerNonNil
+    and armError[0] == NoErrorStore
+    and armPointer[1] == NoPointerStore
+    and armError[1] == ErrorGood
   }
-  // An arm that stores neither lets both zeros through: nil with a nil error.
+  // An arm that stores neither lets both zeros through: nil with a nil
+  // error.
   reachable BothZerosThroughAnArm {
-    pc == Returned
+    phase == Returned
     and reported()
-    and follow
+    and onWitness
     and not looped
-    and not isBool
-    and us[wx] == UKeep
-    and es[wx] == EKeep
+    and not trailingBool
+    and armPointer[witnessFirstArm] == NoPointerStore
+    and armError[witnessFirstArm] == NoErrorStore
     and noStoreAfterLoop()
   }
   // The loop pairs a nil stored in one round with a nil error stored in the
-  // next, which no single arm does.
+  // next. No single arm does that.
   reachable PairAcrossRounds {
-    pc == Returned
-    and follow
+    phase == Returned
+    and onWitness
     and looped
-    and wy != 2
+    and witnessLaterArm != 2
     and noStoreAfterLoop()
-    and not pairsAt(wx, 2)
-    and not pairsAt(wy, 2)
+    and not pairsOnPath(witnessFirstArm, 2)
+    and not pairsOnPath(witnessLaterArm, 2)
   }
-  // u, err = x, e with x, e φ-nodes of P: paired along P, not reported.
+  // u, err = x, e with x and e φ-nodes of P: paired along P, not reported.
   reachable StoredPhisKeptApart {
-    pc == Returned
+    phase == Returned
     and not reported()
-    and storesBothFromP()
-    and px[0] == UNil
-    and py[0] == EGood
-    and px[1] == UExt
-    and py[1] == EBad
+    and storesBothFromEarlier()
+    and earlierX[0] == PointerNil
+    and earlierE[0] == ErrorGood
+    and earlierX[1] == PointerOutside
+    and earlierE[1] == ErrorBad
   }
   reachable StoredPhisReported {
-    pc == Returned and follow and storesBothFromP()
+    phase == Returned and onWitness and storesBothFromEarlier()
   }
   // The store after the loop kills everything before it.
   reachable AfterStoreKills {
-    pc == Returned
+    phase == Returned
     and not reported()
-    and au == UAlloc
-    and pairsAt(0, 2) == false
-    and (exists x: Step { exists y: Step {
-      path(x, y) and uNil(loopU(x, y)) and eBad(loopE(x, y))
+    and afterPointer == PointerNonNil
+    and pairsOnPath(0, 2) == false
+    and (exists first: ArmOrNone { exists later: ArmOrNone {
+      isPath(first, later)
+      and pointerStoreIsNil(loopPointerStore(first, later))
+      and errorStoreIsBad(loopErrorStore(first, later))
     } })
   }
-  // With a bool, the zero of the Alloc is false: nothing to pair.
+  // With a bool, the Alloc's zero is false. So there is nothing to pair.
   reachable BoolZeroIsFalse {
-    pc == Returned
+    phase == Returned
     and not reported()
-    and isBool
-    and uv
-    and e0 == EKeep
-    and eSrc == 2
-    and ae == EKeep
+    and trailingBool
+    and pointerIsNil
+    and entryError == NoErrorStore
+    and errorArm == 2
+    and afterError == NoErrorStore
   }
-  // A nil from outside with a nil error is not reported. The gap.
-  reachable OutsideNilIsMissed { pc == Returned and not reported() and uOut and eb }
+  // A nil from outside with a nil error is not reported. This is the gap.
+  reachable OutsideNilIsMissed {
+    phase == Returned and not reported() and pointerIsOutsideNil and errorIsBad
+  }
 }
