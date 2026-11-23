@@ -159,58 +159,77 @@ func pairFollowedLoad(t *Tracer, v ssa.Value) (*ssa.Alloc, *ssa.UnOp) {
 	return a, load
 }
 
-// pairStores walks back from the loads along each path, to the last store
-// into each variable on that path, and pairs the two stored values, which
-// may be φs themselves.
+// pairStores pairs two loads of followed variables along each path back to
+// the stores they read, and pairs the two stored values, which may be φs
+// themselves. The walk starts at the later load. A store into the earlier
+// load's variable counts only once the walk has passed back over that load,
+// since the earlier load reads the last store before itself.
+//
+// Where one load dominates the other, it comes first on every path to the
+// other. Where neither does, as for two values stored on separate branches,
+// either may come first, so both orders are walked.
 func pairStores(pt, gt *Tracer, pa *ssa.Alloc, pl *ssa.UnOp, pNil bool, ga *ssa.Alloc, gl *ssa.UnOp, gNil bool, pairSeen map[pairKey]bool) bool {
+	judge := func(pd, gd storeDef) bool {
+		return pair(pt, gt, pairAlt{pd.value, []Site{SiteAt(pd.block)}, pNil}, pairAlt{gd.value, []Site{SiteAt(gd.block)}, gNil}, pairSeen)
+	}
+	if !pairLoadBefore(pl, gl) && pairStoresFrom(pa, pl, ga, gl, judge) {
+		return true
+	}
+	return !pairLoadBefore(gl, pl) && pairStoresFrom(ga, gl, pa, pl, func(gd, pd storeDef) bool {
+		return judge(pd, gd)
+	})
+}
+
+// pairLoadBefore reports whether x comes before y on every path to y.
+func pairLoadBefore(x, y *ssa.UnOp) bool {
+	if x.Block() == y.Block() {
+		return slices.Index(x.Block().Instrs, ssa.Instruction(x)) < slices.Index(y.Block().Instrs, ssa.Instruction(y))
+	}
+	return x.Block().Dominates(y.Block())
+}
+
+// pairStoresFrom walks back from the later load ll of la, past the earlier
+// load el of ea, and hands judge the last store into each variable before
+// its own load, along each path.
+func pairStoresFrom(la *ssa.Alloc, ll *ssa.UnOp, ea *ssa.Alloc, el *ssa.UnOp, judge func(ld, ed storeDef) bool) bool {
 	type state struct {
-		b      *ssa.BasicBlock
-		pd, gd *storeDef
+		b        *ssa.BasicBlock
+		ld, ed   storeDef
+		lok, eok bool
+		passed   bool
 	}
 	seen := make(map[state]bool)
-	var walk func(b *ssa.BasicBlock, end int, pd, gd *storeDef) bool
-	walk = func(b *ssa.BasicBlock, end int, pd, gd *storeDef) bool {
-		for i := end - 1; i >= 0 && (pd == nil || gd == nil); i-- {
-			switch in := b.Instrs[i].(type) {
-			case *ssa.Store:
-				if pd == nil && in.Addr == pa {
-					pd = &storeDef{value: in.Val, block: b}
-				}
-				if gd == nil && in.Addr == ga {
-					gd = &storeDef{value: in.Val, block: b}
-				}
-			case *ssa.Alloc:
-				if pd == nil && in == pa {
-					pd = &storeDef{value: storeZero(pa), block: b}
-				}
-				if gd == nil && in == ga {
-					gd = &storeDef{value: storeZero(ga), block: b}
-				}
-			}
-		}
-		if pd != nil && gd != nil {
-			return pair(pt, gt, pairAlt{pd.value, []Site{SiteAt(pd.block)}, pNil}, pairAlt{gd.value, []Site{SiteAt(gd.block)}, gNil}, pairSeen)
-		}
-		for _, p := range b.Preds {
-			s := state{p, pd, gd}
-			if seen[s] {
+	var walk func(s state, end int) bool
+	walk = func(s state, end int) bool {
+		for i := end - 1; i >= 0 && (!s.lok || !s.eok); i-- {
+			in := s.b.Instrs[i]
+			if in == ssa.Instruction(el) {
+				s.passed = true
 				continue
 			}
-			seen[s] = true
-			if walk(p, len(p.Instrs), pd, gd) {
+			if !s.lok {
+				s.ld, s.lok = storeInto(la, s.b, in)
+			}
+			if s.passed && !s.eok {
+				s.ed, s.eok = storeInto(ea, s.b, in)
+			}
+		}
+		if s.lok && s.eok {
+			return judge(s.ld, s.ed)
+		}
+		for _, p := range s.b.Preds {
+			n := s
+			n.b = p
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			if walk(n, len(p.Instrs)) {
 				return true
 			}
 		}
 		return false
 	}
-	// Both loads sit in the return's block, which is where the walk starts.
-	b := pl.Block()
-	end := len(b.Instrs)
-	for i, in := range b.Instrs {
-		if in == pl || in == gl {
-			end = i
-			break
-		}
-	}
-	return walk(b, end, nil, nil)
+	b := ll.Block()
+	return walk(state{b: b}, slices.Index(b.Instrs, ssa.Instruction(ll)))
 }

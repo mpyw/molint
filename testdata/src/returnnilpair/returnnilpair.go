@@ -609,3 +609,50 @@ func PairCheckedErrVarAcrossEdges(c bool) (*T, error) {
 	}
 	return &T{}, errX
 }
+
+// The error is loaded before the pointer is set to nil, and both loads are
+// paired along each path back to their own stores: e holds err's zero.
+func PairLoadBeforeStore() (*T, error) {
+	p := &T{}
+	var err error
+	f := func() { _, _ = p, err }
+	f()
+	e := err
+	p = nil
+	return p, e // want `^PairLoadBeforeStore returns a nil \*T with a nil error; return an error, or mo\.Option\[\*T\] \[return-nil\]$`
+}
+
+// Not reported: e is loaded before err is set to nil, so e is errX on every
+// path.
+func PairLoadInEarlierBlock(c bool) (*T, error) {
+	var p *T
+	err := errX
+	f := func() { _, _ = p, err }
+	f()
+	e := err
+	if c {
+		err = nil
+	}
+	return p, e
+}
+
+// Not reported: x and e are loaded on separate branches, and stored into
+// the results there. Along every path through both loads, x is nil only
+// with e as errX.
+func PairLoadsOnBranches(a, b, c bool) (u *T, err error) {
+	defer cleanup()
+	x, e := (*T)(nil), errX
+	f := func() { _, _ = x, e }
+	f()
+	if c {
+		x, e = get(), nil
+	}
+	u, err = get(), errX
+	if a {
+		u = x
+	}
+	if b {
+		err = e
+	}
+	return
+}

@@ -54,23 +54,32 @@ func storesBefore(a *ssa.Alloc, b *ssa.BasicBlock, end int) []storeDef {
 //declscope:shared // pair.go asks whether a block stores before a load
 func storeLast(a *ssa.Alloc, b *ssa.BasicBlock, end int) (storeDef, bool) {
 	for i := end - 1; i >= 0; i-- {
-		switch in := b.Instrs[i].(type) {
-		case *ssa.Store:
-			if in.Addr == a {
-				return storeDef{value: in.Val, block: b}, true
-			}
-		case *ssa.Alloc:
-			if in == a {
-				return storeDef{value: storeZero(a), block: b}, true
-			}
+		if d, ok := storeInto(a, b, b.Instrs[i]); ok {
+			return d, true
+		}
+	}
+	return storeDef{}, false
+}
+
+// storeInto reports what in, an instruction of b, stores into a: the stored
+// value, or the zero value when in is a itself.
+//
+//declscope:shared // pair.go walks two variables at once
+func storeInto(a *ssa.Alloc, b *ssa.BasicBlock, in ssa.Instruction) (storeDef, bool) {
+	switch in := in.(type) {
+	case *ssa.Store:
+		if in.Addr == a {
+			return storeDef{value: in.Val, block: b}, true
+		}
+	case *ssa.Alloc:
+		if in == a {
+			return storeDef{value: storeZero(a), block: b}, true
 		}
 	}
 	return storeDef{}, false
 }
 
 // storeZero is the zero value of what a holds.
-//
-//declscope:shared // pair.go walks the stores itself
 func storeZero(a *ssa.Alloc) *ssa.Const {
 	return ssa.NewConst(nil, a.Type().(*types.Pointer).Elem())
 }

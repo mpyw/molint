@@ -21,9 +21,11 @@
 //         u, err = ...            err, into both, or into neither
 //       } else { ... }
 //     }
+//     [e := err]                  the error may be loaded here
+//                                 (errorLoadedEarly)
 //     u = AU                      stores between the loop and the return.
 //     err = AE                    Either may be left out, or store x or e
-//     return                      loads u and err
+//     return                      loads u, and err unless loaded above
 //   }
 //
 // In the state, PX and PY are earlierX and earlierE. U0 and E0 are
@@ -42,9 +44,14 @@
 //   u, err = x, e
 //   return
 //
+// With errorLoadedEarly, the function returns u and e, so the error is the
+// one loaded before the store after the loop. Each load reads the last
+// store before itself on the path. So AE does not reach the error, and AU
+// still reaches the pointer.
+//
 // The rule, reported below, needs some path back from the return. On it,
-// the last store of u is a nil constant or the zero. The last store of err
-// is a Bad constant. When both stored values come from P, they are read
+// the last store of u before its load is a nil constant or the zero. The
+// last store of err before its load is a Bad constant. When both stored values come from P, they are read
 // along one edge of P. Without the loop, a path goes through one arm. With
 // it, a path goes through any number, and the last stores of u and err may
 // come from different rounds. Two rounds are enough to reach any such pair:
@@ -85,7 +92,7 @@ spec PairingStores {
   type Arm = 0..1
   type EarlierEdge = 0..1
   type Rounds = 0..2
-  type ChoiceBit = 0..27
+  type ChoiceBit = 0..28
 
   state {
     phase: Phase,
@@ -101,6 +108,7 @@ spec PairingStores {
     afterError: ErrorStore,
     looped: Bool,
     trailingBool: Bool,
+    errorLoadedEarly: Bool,
     // the verdict and its witness path
     verdict: Bool,
     witnessFirstArm: ArmOrNone,
@@ -172,8 +180,10 @@ spec PairingStores {
     if afterPointer == PointerFromX then earlierX[edge]
     else if afterPointer != NoPointerStore then afterPointer
     else loopPointerStore(first, later)
+  // An error loaded early does not see the store after the loop.
   def lastErrorStore(first: ArmOrNone, later: ArmOrNone, edge: EarlierEdge) =
-    if afterError == ErrorFromE then earlierE[edge]
+    if errorLoadedEarly then loopErrorStore(first, later)
+    else if afterError == ErrorFromE then earlierE[edge]
     else if afterError != NoErrorStore then afterError
     else loopErrorStore(first, later)
   def isPath(first: ArmOrNone, later: ArmOrNone) =
@@ -214,6 +224,7 @@ spec PairingStores {
     afterError = pickAfterError(23)
     looped = choice[26]
     trailingBool = choice[27]
+    errorLoadedEarly = choice[28]
     // The verdict and the witness read only the program set above.
     verdict = reported()
     witnessFirstArm = firstArmOfPath()
@@ -291,7 +302,8 @@ spec PairingStores {
     onWitness = onWitness and rounds == pathLength(witnessFirstArm, witnessLaterArm)
   }
 
-  // The store after the loop, then the bare return's loads.
+  // The store after the loop, then the return's loads. An error loaded
+  // early keeps what it held before that store.
   action bareReturn(outsideNil: Bool) {
     requires phase == LeftLoop
     phase = Returned
@@ -301,7 +313,10 @@ spec PairingStores {
     pointerIsOutsideNil =
       if afterPointer == PointerFromX then xIsOutsideNil
       else recordOutsideNil(afterPointer, outsideNil, pointerIsOutsideNil)
-    errorIsBad = if afterError == ErrorFromE then eIsBad else recordBad(afterError, errorIsBad)
+    errorIsBad =
+      if errorLoadedEarly then errorIsBad
+      else if afterError == ErrorFromE then eIsBad
+      else recordBad(afterError, errorIsBad)
     onWitness = onWitness and not outsideNil
   }
 
@@ -512,6 +527,28 @@ spec PairingStores {
       and pointerStoreIsNil(loopPointerStore(first, later))
       and errorStoreIsBad(loopErrorStore(first, later))
     } })
+  }
+  // `e := err; p = nil; return p, e`: the pointer's store after the loop
+  // still counts, beside the error loaded before it.
+  reachable EarlyLoadKeepsLaterStore {
+    phase == Returned
+    and onWitness
+    and errorLoadedEarly
+    and afterPointer == PointerNil
+    and not (exists first: ArmOrNone { exists later: ArmOrNone {
+      isPath(first, later)
+      and pointerStoreIsNil(loopPointerStore(first, later))
+      and errorStoreIsBad(loopErrorStore(first, later))
+    } })
+  }
+  // `e := err; err = nil; return p, e`: the error loaded early misses the
+  // nil stored after it.
+  reachable EarlyLoadMissesLaterStore {
+    phase == Returned
+    and not reported()
+    and errorLoadedEarly
+    and afterError == ErrorBad
+    and pointerIsNil
   }
   // With a bool, the Alloc's zero is false. So there is nothing to pair.
   reachable BoolZeroIsFalse {

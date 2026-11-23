@@ -81,7 +81,7 @@ if u == nil {
 }
 ```
 
-A bare return may load both results from variables SSA does not lift, as in a function with a `defer`. It is judged the same way. Each path back to the stores is judged on its own, with both results read on that path.
+A bare return may load both results from variables SSA does not lift, as in a function with a `defer`. It is judged the same way. Each path back to the stores is judged on its own, with both results read on that path. The two loads need not sit together: each reads the last store before itself on the path. So `e := err; p = nil; return p, e` is reported when err is nil there, and `e := err; if c { err = nil }; return p, e` does not pair p with that nil.
 
 Some returns store their results into local variables, then load them. These are a function with a `defer`, a function whose named results a function literal captures, and a `return` inside the body of a range-over-func loop. A `return` statement with operands is judged on the values it stores, whatever captures the variables. So `return nil` is reported even when a deferred function replaces the nil later. The return says nil, and that is what the rule reads. A bare `return` is judged on the stores reaching it, followed as [Nil values](#nil-values) says. A `return` inside a range-over-func body is judged as a return of the enclosing function, not of the synthetic function literal.
 
