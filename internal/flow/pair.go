@@ -108,17 +108,17 @@ func pairMayBeNil(v ssa.Value) bool {
 }
 
 // pairStep reads a along edge k into blk. A φ of blk gives its edge. A load
-// in blk of a followed variable, with no store before it in blk, gives what
-// reaches the end of that predecessor, one alternative per store. Any other
-// value is the same on the edge: when it is defined before blk, the checks
-// on the edge apply to it too.
+// of a followed variable that blk dominates gives the stores reaching it
+// along that edge, one alternative per store. Any other value is the same on
+// the edge: when it is defined before blk, the checks on the edge apply to it
+// too.
 func pairStep(t *Tracer, a pairAlt, blk *ssa.BasicBlock, k int, e Site) []pairAlt {
 	if phi, ok := a.v.(*ssa.Phi); ok && phi.Block() == blk {
 		return []pairAlt{{phi.Edges[k], []Site{e}, a.checkedNil}}
 	}
-	if al, load := pairFollowedLoad(t, a.v); al != nil && load.Block() == blk && pairLoadsEntry(al, load) {
+	if al, load := pairFollowedLoad(t, a.v); al != nil && blk.Dominates(load.Block()) {
 		var alts []pairAlt
-		for _, d := range storesBefore(al, blk.Preds[k], len(blk.Preds[k].Instrs)) {
+		for _, d := range pairStoresOnEdge(al, load, blk, k) {
 			alts = append(alts, pairAlt{d.value, []Site{SiteAt(d.block)}, a.checkedNil})
 		}
 		return alts
@@ -129,12 +129,38 @@ func pairStep(t *Tracer, a pairAlt, blk *ssa.BasicBlock, k int, e Site) []pairAl
 	return []pairAlt{a}
 }
 
-// pairLoadsEntry reports whether load reads what a holds on entry to its
-// block: nothing in the block stores into a before it.
-func pairLoadsEntry(a *ssa.Alloc, load *ssa.UnOp) bool {
+// pairStoresOnEdge lists the stores into a that reach load on a path that
+// enters blk along edge k. blk dominates the load. The walk goes back from
+// the load. A path that reaches blk with no store on the way reads what
+// reaches the end of blk's k-th predecessor.
+func pairStoresOnEdge(a *ssa.Alloc, load *ssa.UnOp, blk *ssa.BasicBlock, k int) []storeDef {
+	var out []storeDef
+	entry := false
+	seen := make(map[*ssa.BasicBlock]bool)
+	var walk func(b *ssa.BasicBlock, end int)
+	walk = func(b *ssa.BasicBlock, end int) {
+		if d, ok := storeLast(a, b, end); ok {
+			out = append(out, d)
+			return
+		}
+		if b == blk {
+			entry = true
+			return
+		}
+		for _, p := range b.Preds {
+			if !seen[p] {
+				seen[p] = true
+				walk(p, len(p.Instrs))
+			}
+		}
+	}
 	b := load.Block()
-	_, stored := storeLast(a, b, slices.Index(b.Instrs, ssa.Instruction(load)))
-	return !stored
+	walk(b, slices.Index(b.Instrs, ssa.Instruction(load)))
+	if entry {
+		pred := blk.Preds[k]
+		out = append(out, storesBefore(a, pred, len(pred.Instrs))...)
+	}
+	return out
 }
 
 func pairDefinedBefore(v ssa.Value, blk *ssa.BasicBlock) bool {

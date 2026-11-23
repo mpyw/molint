@@ -22,7 +22,7 @@ All six are `proved` under `--engine induction`.
 | `nil_value.fsl` | Nil values: the constant, φ-nodes in a loop and a join, nil checks on join edges and on loop edges | Reported exactly when some run returns a nil that is a constant's or passed a nil check. A nil can take three rounds of the loop to arrive. A check on the way stops it at its own edge |
 | `pairing.fsl` | `return-nil` with a trailing `error` or `bool`, through φ-nodes | Reported exactly when some run returns such a nil pointer with a nil error (or `true`). The pairing continues into the loop's φ-nodes, and a pair may come from two rounds. A check `u != nil` on an edge settles u before its φ-nodes are taken apart; `u == nil` makes it nil |
 | `pairing_stores.fsl` | `return-nil` for a bare return in a function with a defer | Reported exactly when some run returns the nil constant with a nil error (or `true`). Both loads are read along the same path back to their stores. Stored values that are φ-nodes of one block are paired along its edges. A store after the loop kills the ones before it. An error loaded before that store keeps what it held, while the pointer's store still counts |
-| `pairing_load.fsl` | `return-nil` pairing a φ-node with a load of a followed variable | Reported exactly when some run returns the pair. The load is read, along each edge, as the stores reaching the end of that edge's predecessor |
+| `pairing_load.fsl` | `return-nil` pairing a φ-node with a load of a followed variable | Reported exactly when some run returns the pair. The load is read, along each edge, as the stores reaching it on a path through that edge. The load may sit in a later block than the φ-node, past an `if` that may store into the variable |
 | `local_store.fsl` | Loads of a local that is not lifted | Reported exactly when some run loads the nil constant, for a variable no code can store into through its address. The Alloc counts as a store of nil. A literal that only loads the variable keeps it followed: the converse is stated over the run, so a rule that drops it breaks |
 | `result_zero.fsl` | `result-zero`, for a variable SSA lifts | Reported exactly when some run passes on a zero Result that is a constant's or passed a comparison. A comparison with the zero constant stops a zero at its own edge. An overwrite before the use kills it. A comparison is not a use: the run records which instructions pass the Result on, and the claim is stated over that record |
 
@@ -55,6 +55,8 @@ The specs were checked by editing the rule by hand and re-running. Each edit bel
 | | Each load judged apart | `WitnessNeverBlocked` |
 | | Both walks started at the early load of the error, so the pointer's store after the loop is missed; both walks started at the pointer's load, so the early error sees the store after the loop | `ReportMeansNilWithBad` |
 | `pairing_load.fsl` | The load judged whole; an arm's store not killing | `ReportMeansNilWithBad` |
+| | The load judged whole when it sits after the later `if` | `ReportMeansNilWithBad` |
+| | The later `if`'s store ignored | `NilWithBadIsReported` |
 | | The Alloc's zero forgotten; one store of the earlier if only | `NilWithBadIsReported` |
 | `local_store.fsl` | `followed()` false; a load-only literal not followed | `ConstantNilIsReported` |
 | | An escaped variable followed; a later store not killing; `f()` counted as nil | `ReportMeansANilIsLoaded` |

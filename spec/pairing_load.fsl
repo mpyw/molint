@@ -3,11 +3,10 @@
 // design/rules.md.
 //
 // A function literal that only loads err keeps err in memory, and keeps it
-// followed. The return then pairs a φ-node u of its block with a load of
-// err. pairStep in internal/flow/pair.go reads that load along each edge
-// into the block. On an edge, the load is the stores that reach the end of
-// that edge's predecessor, one alternative per store. This model puts the
-// load in the φ-node's own block.
+// followed. The return then pairs a φ-node u with a load of err. pairStep
+// in internal/flow/pair.go reads that load along each edge into the
+// φ-node's block. On an edge, the load is the stores that reach it on a
+// path through that edge, one alternative per store.
 //
 // The program:
 //
@@ -15,15 +14,17 @@
 //   var err error                     the Alloc: a store of nil
 //   defer func() { log(err) }()       only loads err
 //   if a { err = P0 } else { err = P1 }   an earlier if. Each arm may store
-//   switch {                          three edges into the return's block.
+//   switch {                          three edges into the switch's join.
 //   case c0: u, err = U0, E0          Each arm sets u, and may store err
 //   case c1: u, err = U1, E1
 //   default: u, err = U2, E2
 //   }
+//   if d { err = L }                  a later if, or none (hasLaterIf). Its
+//                                     arm may store nothing
 //   return u, err                     u is a φ-node, err a load
 //
-// In the state, P0 and P1 are earlierStore. U0..U2 are armPointer, and
-// E0..E2 are armError.
+// In the state, P0 and P1 are earlierStore. U0..U2 are armPointer, E0..E2
+// are armError, and L is laterStore.
 //
 // The stores into err are Bad (nil), Good (errors.New) or Out (f()), or
 // nothing (NoErrorStore). u is nil, &T{} or f().
@@ -37,9 +38,13 @@
 //   if b { u = x } else { err = e }
 //   return u, err
 //
+// Nor is the same with `if cond() { log() }` before the return. The load
+// then sits in a later block than the φ-node.
+//
 // The rule, reported below, needs some edge that brings the nil constant
-// for u. A store that reaches the end of its predecessor must store Bad.
-// That store is the arm's own E. When the arm stores nothing, it is a
+// for u. A store that reaches the load on a path through that edge must
+// store Bad. That store is L, when the later if is taken and stores.
+// Otherwise it is the arm's own E. When the arm stores nothing, it is a
 // store that reaches the switch: P0, P1 or the Alloc's zero.
 //
 // The run keeps its own record: whether u and err hold the constants.
@@ -59,10 +64,10 @@ spec PairingLoad {
   // stores nothing into err.
   enum PointerOperand { Nil, NonNilLiteral, Outside }
   enum ErrorStore { NoErrorStore, ErrorBad, ErrorGood, ErrorOutside }
-  enum Phase { Ready, PastEarlierIf, Returned }
+  enum Phase { Ready, PastEarlierIf, PastSwitch, Returned }
   type Edge = 0..2
   type EarlierEdge = 0..1
-  type ChoiceBit = 0..15
+  type ChoiceBit = 0..18
 
   state {
     phase: Phase,
@@ -71,16 +76,23 @@ spec PairingLoad {
     earlierStore: Map<EarlierEdge, ErrorStore>,
     armPointer: Map<Edge, PointerOperand>,
     armError: Map<Edge, ErrorStore>,
+    hasLaterIf: Bool,
+    laterStore: ErrorStore,
     // the verdict and its witness
     verdict: Bool,
     witnessEdge: Edge,
     witnessEarlierEdge: EarlierEdge,
+    witnessLaterTaken: Bool,
     // the run's own record
     errIsBadBeforeSwitch: Bool,
     pointerIsNil: Bool,
     pointerIsOutsideNil: Bool,
     errorIsBad: Bool,
-    onWitness: Bool
+    onWitness: Bool,
+    // the path the run took
+    takenEarlierEdge: EarlierEdge,
+    takenEdge: Edge,
+    laterTaken: Bool
   }
 
   def pickPointer(bit: ChoiceBit) =
@@ -104,15 +116,24 @@ spec PairingLoad {
   def badReachesArmEnd(edge: Edge, earlierEdge: EarlierEdge) =
     if armError[edge] != NoErrorStore then armError[edge] == ErrorBad
     else storeIsBad(earlierStore[earlierEdge])
-  def pairs(edge: Edge, earlierEdge: EarlierEdge) =
-    armPointer[edge] == Nil and badReachesArmEnd(edge, earlierEdge)
+  // What err holds at the load: L when the later if is taken and stores.
+  def badAtLoad(edge: Edge, earlierEdge: EarlierEdge, later: Bool) =
+    if later and laterStore != NoErrorStore then laterStore == ErrorBad
+    else badReachesArmEnd(edge, earlierEdge)
+  def pairs(edge: Edge, earlierEdge: EarlierEdge, later: Bool) =
+    (hasLaterIf or not later)
+    and armPointer[edge] == Nil
+    and badAtLoad(edge, earlierEdge, later)
+  def pairsEitherLater(edge: Edge, earlierEdge: EarlierEdge) =
+    exists later: Bool { pairs(edge, earlierEdge, later) }
   def reported() =
-    exists edge: Edge { exists earlierEdge: EarlierEdge { pairs(edge, earlierEdge) } }
+    exists edge: Edge { exists earlierEdge: EarlierEdge { pairsEitherLater(edge, earlierEdge) } }
   def firstEdge() =
-    if exists earlierEdge: EarlierEdge { pairs(0, earlierEdge) } then 0
-    else if exists earlierEdge: EarlierEdge { pairs(1, earlierEdge) } then 1
+    if exists earlierEdge: EarlierEdge { pairsEitherLater(0, earlierEdge) } then 0
+    else if exists earlierEdge: EarlierEdge { pairsEitherLater(1, earlierEdge) } then 1
     else 2
-  def firstEarlierEdge(edge: Edge) = if pairs(edge, 0) then 0 else 1
+  def firstEarlierEdge(edge: Edge) = if pairsEitherLater(edge, 0) then 0 else 1
+  def firstLaterTaken(edge: Edge, earlierEdge: EarlierEdge) = not pairs(edge, earlierEdge, false)
 
   init {
     phase = Ready
@@ -123,14 +144,20 @@ spec PairingLoad {
       armPointer[edge] = pickPointer(4 + 4 * edge)
       armError[edge] = pickErrorStore(6 + 4 * edge)
     }
+    hasLaterIf = choice[16]
+    laterStore = pickErrorStore(17)
     verdict = reported()
     witnessEdge = firstEdge()
     witnessEarlierEdge = firstEarlierEdge(firstEdge())
+    witnessLaterTaken = firstLaterTaken(firstEdge(), firstEarlierEdge(firstEdge()))
     errIsBadBeforeSwitch = true
     pointerIsNil = false
     pointerIsOutsideNil = false
     errorIsBad = false
     onWitness = false
+    takenEarlierEdge = 0
+    takenEdge = 0
+    laterTaken = false
   }
 
   // --- the run --------------------------------------------------------------------
@@ -138,6 +165,7 @@ spec PairingLoad {
   action earlierIf(earlierEdge: EarlierEdge) {
     requires phase == Ready
     phase = PastEarlierIf
+    takenEarlierEdge = earlierEdge
     errIsBadBeforeSwitch =
       if earlierStore[earlierEdge] == NoErrorStore then errIsBadBeforeSwitch
       else earlierStore[earlierEdge] == ErrorBad
@@ -146,13 +174,26 @@ spec PairingLoad {
 
   action takeArm(edge: Edge, outsideNil: Bool) {
     requires phase == PastEarlierIf
-    phase = Returned
+    phase = PastSwitch
+    takenEdge = edge
     pointerIsNil = armPointer[edge] == Nil
     pointerIsOutsideNil = armPointer[edge] == Outside and outsideNil
     errorIsBad =
       if armError[edge] == NoErrorStore then errIsBadBeforeSwitch
       else armError[edge] == ErrorBad
     onWitness = onWitness and edge == witnessEdge and not outsideNil
+  }
+
+  // The later if, taken or not, then the return.
+  action laterIf(later: Bool) {
+    requires phase == PastSwitch
+    requires hasLaterIf or not later
+    phase = Returned
+    laterTaken = later
+    errorIsBad =
+      if later and laterStore != NoErrorStore then laterStore == ErrorBad
+      else errorIsBad
+    onWitness = onWitness and later == witnessLaterTaken
   }
 
   terminal { phase == Returned }
@@ -172,6 +213,7 @@ spec PairingLoad {
     verdict == reported()
     and witnessEdge == firstEdge()
     and witnessEarlierEdge == firstEarlierEdge(firstEdge())
+    and witnessLaterTaken == firstLaterTaken(firstEdge(), firstEarlierEdge(firstEdge()))
   }
   invariant FreshBeforeRun {
     phase == Ready => (
@@ -183,12 +225,27 @@ spec PairingLoad {
     )
   }
   invariant FollowOnlyWhenReported { onWitness => verdict }
-  invariant WitnessWorks { verdict => pairs(witnessEdge, witnessEarlierEdge) }
+  invariant WitnessWorks { verdict => pairs(witnessEdge, witnessEarlierEdge, witnessLaterTaken) }
   invariant EarlyTraced {
-    phase != Ready => (exists earlierEdge: EarlierEdge {
-      errIsBadBeforeSwitch == storeIsBad(earlierStore[earlierEdge])
-      and (onWitness => earlierEdge == witnessEarlierEdge)
-    })
+    phase != Ready => (
+      errIsBadBeforeSwitch == storeIsBad(earlierStore[takenEarlierEdge])
+      and (onWitness => takenEarlierEdge == witnessEarlierEdge)
+    )
+  }
+  // After the switch, the run holds what the taken arm left, on the path
+  // through the taken earlier edge.
+  invariant ArmTraced {
+    (phase == PastSwitch or phase == Returned) => (
+      pointerIsNil == (armPointer[takenEdge] == Nil)
+      and (pointerIsOutsideNil => armPointer[takenEdge] == Outside)
+      and (onWitness => (takenEdge == witnessEdge and not pointerIsOutsideNil))
+      and (phase == PastSwitch => errorIsBad == badReachesArmEnd(takenEdge, takenEarlierEdge))
+      and (phase == Returned => (
+        errorIsBad == badAtLoad(takenEdge, takenEarlierEdge, laterTaken)
+        and (hasLaterIf or not laterTaken)
+        and (onWitness => laterTaken == witnessLaterTaken)
+      ))
+    )
   }
 
   // --- witnesses ------------------------------------------------------------------
@@ -203,6 +260,29 @@ spec PairingLoad {
     and armError[1] == ErrorGood
     and earlierStore[0] == NoErrorStore
     and earlierStore[1] == NoErrorStore
+  }
+  // The same, with an if that stores nothing before the return. It is still
+  // kept apart, although the load sits in a later block.
+  reachable LoadAfterJoinKeptApart {
+    phase == Returned
+    and not reported()
+    and hasLaterIf
+    and laterStore == NoErrorStore
+    and laterTaken
+    and armPointer[0] == NonNilLiteral
+    and armError[0] == NoErrorStore
+    and armPointer[1] == Nil
+    and armError[1] == ErrorGood
+    and earlierStore[0] == NoErrorStore
+    and earlierStore[1] == NoErrorStore
+  }
+  // The later if stores the nil error on the edge where u is nil.
+  reachable LaterStoreReported {
+    phase == Returned
+    and onWitness
+    and witnessLaterTaken
+    and laterStore == ErrorBad
+    and not pairs(witnessEdge, witnessEarlierEdge, false)
   }
   // The earlier if stores the nil error on one arm and a non-nil one on the
   // other. So the load has two alternatives on the edge that keeps err.

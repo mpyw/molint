@@ -56,7 +56,7 @@ A return must not give a nil value in a pointer result.
 
 "Last result is `error`" means a type identical to the predeclared `error`. "Last result is `bool`" means a type identical to the predeclared `bool`.
 
-A return is judged along each path that reaches it through φs. Where the error or bool is a φ, each incoming edge is judged on its own. Every other φ of the same block is read along the same edge. When the values on that edge are φs of the same earlier block, the same is done there, recursively. So this is not reported, and neither is the same shape nested inside another `if`:
+A return is judged along each path that reaches it through φs. Where the error or bool is a φ, each incoming edge is judged on its own. Every other φ of the same block is read along the same edge. So is a load of a variable SSA does not lift, when the load sits in that block or in a block it dominates: it is read as the stores that reach it on a path through that edge. When the values on that edge are φs of the same earlier block, the same is done there, recursively. So this is not reported, and neither is the same shape nested inside another `if`:
 
 ```go
 var u *T
@@ -68,6 +68,8 @@ if b {
 }
 return u, err
 ```
+
+Nor is it reported when a function literal captures `u`, so that `u` is loaded, and an `if cond() { log() }` comes before the return.
 
 A nil check on a φ settles it for the whole path, before the φ is taken apart. `u != nil` on the way stops the path. `u == nil` makes the φ nil along each edge that brings a value that can be nil. An edge that brings `&T{}`, or an error made from a value of a concrete type, cannot pass the check, so it gives no pair. So this is not reported:
 
