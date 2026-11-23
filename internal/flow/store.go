@@ -51,7 +51,7 @@ func storesBefore(a *ssa.Alloc, b *ssa.BasicBlock, end int) []storeDef {
 
 // storeLast finds the last store into a in b before end, or a itself.
 //
-//declscope:shared // pair.go asks whether a block stores before a load
+//declscope:shared // pair.go walks back from a load along one edge
 func storeLast(a *ssa.Alloc, b *ssa.BasicBlock, end int) (storeDef, bool) {
 	for i := end - 1; i >= 0; i-- {
 		if d, ok := storeInto(a, b, b.Instrs[i]); ok {

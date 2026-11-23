@@ -656,3 +656,72 @@ func PairLoadsOnBranches(a, b, c bool) (u *T, err error) {
 	}
 	return
 }
+
+// Not reported: u, which a literal keeps in memory, is loaded in a block
+// after the join of err's φ. Along each edge into the join, the load reads
+// the stores reaching that edge, so u is nil only beside errX.
+func PairLoadAfterJoin(c bool) (*T, error) {
+	var u *T
+	f := func() { _ = u }
+	f()
+	var err error
+	if c {
+		u = get()
+	} else {
+		err = errX
+	}
+	if cond() {
+		log()
+	}
+	return u, err
+}
+
+// The same with an edge that sets neither.
+func PairLoadAfterJoinMissing(b, c bool) (*T, error) {
+	var u *T
+	f := func() { _ = u }
+	f()
+	var err error
+	if b {
+		u = get()
+	} else if c {
+		err = errX
+	}
+	if cond() {
+		log()
+	}
+	return u, err // want `^PairLoadAfterJoinMissing returns a nil \*T with a nil error; return an error, or mo\.Option\[\*T\] \[return-nil\]$`
+}
+
+// Not reported: a store after the join, on the way to the load, is read on
+// its own path, and brings get2(). u is nil only on the edge where err is
+// errX.
+func PairLoadAfterJoinStore(c bool) (*T, error) {
+	var u *T
+	f := func() { _ = u }
+	f()
+	err := errX
+	if c {
+		u = get()
+		err = nil
+	}
+	if cond() {
+		u = get2()
+	}
+	return u, err
+}
+
+// The same store after the join, where an edge brings a nil error.
+func PairLoadAfterJoinStoreNil(c bool) (*T, error) {
+	u := get()
+	f := func() { _ = u }
+	f()
+	var err error
+	if c {
+		err = errX
+	}
+	if cond() {
+		u = nil
+	}
+	return u, err // want `^PairLoadAfterJoinStoreNil returns a nil \*T with a nil error; return an error, or mo\.Option\[\*T\] \[return-nil\]$`
+}
