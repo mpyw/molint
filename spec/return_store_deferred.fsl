@@ -1,4 +1,4 @@
-// FAILS ON PURPOSE. It documents an accepted consequence of return-nil: a
+// FAILS ON PURPOSE. It documents an accepted consequence of return-nil. A
 // return with operands is judged on the values it stores, whatever captures
 // the result variables. See "return-nil" in design/rules.md.
 //
@@ -7,66 +7,98 @@
 //     return nil                reported: "F returns a nil *T"
 //   }
 //
-// The return stores nil, the deferred literal replaces it with def, and the
-// caller gets def. The report stands on purpose: the return says nil.
+// The return stores nil, and the deferred literal replaces it with def. So
+// the caller gets def. The report stands on purpose: the return says nil.
 //
-// The program: `return V` with V nil, &T{} or f(), in a function whose
+// The program is `return V`, with V nil, &T{} or f(). The function's
 // deferred literal keeps p, sets it non-nil, or sets it to f(). The run
 // stores V, runs the literal, and loads p as the result.
 //
-// ReportMeansANilIsReturned is the claim the other specs prove: when
-// reported, the witness run returns the nil constant. It breaks here, and
-// that is the consequence the rules accept. local_store_escape.fsl holds the
-// bare-return form, which loads p and is not followed.
+// ReportMeansANilIsReturned is the claim the other specs prove. When the
+// rule reports, the witness run returns the nil constant. It breaks here,
+// and that is the consequence the rules accept. local_store_escape.fsl
+// holds the bare-return form, which loads p and is not followed.
 fsl 5
 spec ReturnStoreDeferred {
-  enum Op { Nil, Alloc, Ext }
+  // Nil is the constant. NonNilLiteral is &T{}. Outside is f().
+  enum Operand { Nil, NonNilLiteral, Outside }
   enum Effect { Keeps, SetsNonNil, SetsOutside }
-  enum Val { NilConst, NilExt, NonNil }
-  enum Pc { Ready, Judged, Stored, Returned }
-  type Bit = 0..3
+  enum Value { NilConstant, NilOutside, NonNil }
+  enum Phase { Ready, Judged, Stored, Returned }
+  type ChoiceBit = 0..3
 
   state {
-    pc: Pc,
-    ch: Map<Bit, Bool>,
-    v: Op, eff: Effect,
-    rep: Bool, p: Val, rv: Val, follow: Bool
+    phase: Phase,
+    choice: Map<ChoiceBit, Bool>,
+    // the program: V, and what the deferred literal does to p
+    returnOperand: Operand,
+    deferredEffect: Effect,
+    // the verdict
+    verdict: Bool,
+    // the run
+    pValue: Value,
+    returnedValue: Value,
+    onWitness: Bool
   }
 
   init {
-    pc = Ready
-    v = if ch[0] then Nil else if ch[1] then Alloc else Ext
-    eff = if ch[2] then Keeps else if ch[3] then SetsNonNil else SetsOutside
-    rep = false  p = NonNil  rv = NonNil  follow = false
+    phase = Ready
+    returnOperand =
+      if choice[0] then Nil
+      else if choice[1] then NonNilLiteral
+      else Outside
+    deferredEffect =
+      if choice[2] then Keeps
+      else if choice[3] then SetsNonNil
+      else SetsOutside
+    verdict = false
+    pValue = NonNil
+    returnedValue = NonNil
+    onWitness = false
   }
 
-  // The rule as written: the stored value is judged.
-  def reported() = v == Nil
+  // The rule as written: it judges the stored value.
+  def reported() = returnOperand == Nil
 
   action judge() {
-    requires pc == Ready
-    pc = Judged  rep = reported()
+    requires phase == Ready
+    phase = Judged
+    verdict = reported()
   }
 
-  action store(n: Bool) {
-    requires pc == Judged
-    pc = Stored
-    p = if v == Nil then NilConst else if v == Alloc then NonNil else if n then NilExt else NonNil
-    follow = rep and not n
+  action store(outsideNil: Bool) {
+    requires phase == Judged
+    phase = Stored
+    pValue =
+      if returnOperand == Nil then NilConstant
+      else if returnOperand == NonNilLiteral then NonNil
+      else if outsideNil then NilOutside
+      else NonNil
+    onWitness = verdict and not outsideNil
   }
 
-  // The deferred literal runs, then p is loaded as the result.
-  action returns(n: Bool) {
-    requires pc == Stored
-    pc = Returned
-    rv = if eff == Keeps then p else if eff == SetsNonNil then NonNil
-         else if n then NilExt else NonNil
-    follow = follow and not n
+  // The deferred literal runs. Then the function loads p as the result.
+  action runDeferredAndLoad(outsideNil: Bool) {
+    requires phase == Stored
+    phase = Returned
+    returnedValue =
+      if deferredEffect == Keeps then pValue
+      else if deferredEffect == SetsNonNil then NonNil
+      else if outsideNil then NilOutside
+      else NonNil
+    onWitness = onWitness and not outsideNil
   }
 
-  terminal { pc == Returned }
+  terminal { phase == Returned }
 
-  invariant ReportMeansANilIsReturned { (follow and pc == Returned) => rv == NilConst }
+  invariant ReportMeansANilIsReturned {
+    (onWitness and phase == Returned) => returnedValue == NilConstant
+  }
 
-  reachable KeptNilIsReturned { pc == Returned and follow and eff == Keeps and rv == NilConst }
+  reachable KeptNilIsReturned {
+    phase == Returned
+    and onWitness
+    and deferredEffect == Keeps
+    and returnedValue == NilConstant
+  }
 }

@@ -1,6 +1,6 @@
-// FAILS ON PURPOSE. This is the pairing of a φ-node with a load that judges
-// the load whole, over every store that reaches it, and the counterexample is
-// the reason pairStep reads the load along each edge.
+// FAILS ON PURPOSE. This is the pairing of a φ-node with a load that
+// judges the load whole, over every store that reaches it. Its
+// counterexample is the reason pairStep reads the load along each edge.
 //
 //   var u *T
 //   var err error
@@ -8,101 +8,162 @@
 //   if b { u = x } else { err = e }
 //   return u, err               reported: "F returns a nil *T with a nil error"
 //
-// u is nil on the else edge. The load of err is reached by its zero through
-// the then edge. No run returns nil with a nil error.
+// u is nil on the else edge. The zero of err reaches the load through the
+// then edge. No run returns nil with a nil error.
 //
 // The program, the run and the claim are those of pairing_load.fsl, except
-// for reported(). The witness takes the edge whose stores make err nil. The
+// for reported. The witness takes the edge whose stores make err nil. The
 // run is limited to programs that pairing_load.fsl's rule does not report.
 fsl 5
 spec PairingLoadWhole {
-  enum UOp { Nil, Alloc, Ext }
-  enum EOp { EKeep, EBad, EGood, EOut }
-  enum Pc { Ready, Early, Returned }
+  // NonNilLiteral is &T{}, and Outside is f(). NoErrorStore: the arm
+  // stores nothing into err.
+  enum PointerOperand { Nil, NonNilLiteral, Outside }
+  enum ErrorStore { NoErrorStore, ErrorBad, ErrorGood, ErrorOutside }
+  enum Phase { Ready, PastEarlierIf, Returned }
   type Edge = 0..2
-  type Pre = 0..1
-  type Bit = 0..15
+  type EarlierEdge = 0..1
+  type ChoiceBit = 0..15
 
   state {
-    pc: Pc,
-    ch: Map<Bit, Bool>,
+    phase: Phase,
+    choice: Map<ChoiceBit, Bool>,
     // the program
-    pe: Map<Pre, EOp>, uk: Map<Edge, UOp>, ek: Map<Edge, EOp>,
+    earlierStore: Map<EarlierEdge, ErrorStore>,
+    armPointer: Map<Edge, PointerOperand>,
+    armError: Map<Edge, ErrorStore>,
     // the verdict and its witness
-    rep: Bool, wk: Edge, we: Pre,
+    verdict: Bool,
+    witnessEdge: Edge,
+    witnessEarlierEdge: EarlierEdge,
     // the run's own record
-    errBad: Bool, uv: Bool, uOut: Bool, eb: Bool, follow: Bool
+    errIsBadBeforeSwitch: Bool,
+    pointerIsNil: Bool,
+    pointerIsOutsideNil: Bool,
+    errorIsBad: Bool,
+    onWitness: Bool
   }
 
-  def pickU(i: Bit) = if ch[i] then Nil else if ch[i + 1] then Alloc else Ext
-  def pickE(i: Bit) =
-    if ch[i] then (if ch[i + 1] then EKeep else EBad) else (if ch[i + 1] then EGood else EOut)
+  def pickPointer(bit: ChoiceBit) =
+    if choice[bit] then Nil
+    else if choice[bit + 1] then NonNilLiteral
+    else Outside
+  def pickErrorStore(bit: ChoiceBit) =
+    if choice[bit] then
+      if choice[bit + 1] then NoErrorStore
+      else ErrorBad
+    else
+      if choice[bit + 1] then ErrorGood
+      else ErrorOutside
 
   // --- the rule -------------------------------------------------------------------
 
   // The Alloc's zero is the nil error.
-  def badStore(s: EOp) = s == EBad or s == EKeep
-  // The stores reaching the end of arm k's block, read on the path through
-  // the earlier if's edge e.
-  def reachesBad(k: Edge, e: Pre) = if ek[k] != EKeep then ek[k] == EBad else badStore(pe[e])
-  def pairs(k: Edge, e: Pre) = uk[k] == Nil and reachesBad(k, e)
+  def storeIsBad(store: ErrorStore) = store == ErrorBad or store == NoErrorStore
+  // The stores that reach the end of an arm's block, read on the path
+  // through the earlier if's edge.
+  def badReachesArmEnd(edge: Edge, earlierEdge: EarlierEdge) =
+    if armError[edge] != NoErrorStore then armError[edge] == ErrorBad
+    else storeIsBad(earlierStore[earlierEdge])
+  def pairs(edge: Edge, earlierEdge: EarlierEdge) =
+    armPointer[edge] == Nil and badReachesArmEnd(edge, earlierEdge)
   // THE NAIVE RULE: the load is judged whole.
-  def reported() = (exists k: Edge { uk[k] == Nil }) and (exists k: Edge { exists e: Pre { reachesBad(k, e) } })
+  def reported() =
+    (exists edge: Edge { armPointer[edge] == Nil })
+    and (exists edge: Edge { exists earlierEdge: EarlierEdge { badReachesArmEnd(edge, earlierEdge) } })
   // The rule of pairing_load.fsl, to pick the programs it does not report.
-  def provedReported() = exists k: Edge { exists e: Pre { pairs(k, e) } }
+  def provedReported() =
+    exists edge: Edge { exists earlierEdge: EarlierEdge { pairs(edge, earlierEdge) } }
   def firstEdge() =
-    if exists e: Pre { reachesBad(0, e) } then 0 else if exists e: Pre { reachesBad(1, e) } then 1 else 2
-  def firstPre(k: Edge) = if reachesBad(k, 0) then 0 else 1
+    if exists earlierEdge: EarlierEdge { badReachesArmEnd(0, earlierEdge) } then 0
+    else if exists earlierEdge: EarlierEdge { badReachesArmEnd(1, earlierEdge) } then 1
+    else 2
+  def firstEarlierEdge(edge: Edge) = if badReachesArmEnd(edge, 0) then 0 else 1
 
   init {
-    pc = Ready
-    forall e: Pre { pe[e] = pickE(2 * e) }
-    forall k: Edge { uk[k] = pickU(4 + 4 * k)  ek[k] = pickE(6 + 4 * k) }
-    rep = reported()  wk = firstEdge()  we = firstPre(firstEdge())
-    errBad = true  uv = false  uOut = false  eb = false  follow = false
+    phase = Ready
+    forall earlierEdge: EarlierEdge {
+      earlierStore[earlierEdge] = pickErrorStore(2 * earlierEdge)
+    }
+    forall edge: Edge {
+      armPointer[edge] = pickPointer(4 + 4 * edge)
+      armError[edge] = pickErrorStore(6 + 4 * edge)
+    }
+    verdict = reported()
+    witnessEdge = firstEdge()
+    witnessEarlierEdge = firstEarlierEdge(firstEdge())
+    errIsBadBeforeSwitch = true
+    pointerIsNil = false
+    pointerIsOutsideNil = false
+    errorIsBad = false
+    onWitness = false
   }
 
   // --- the run --------------------------------------------------------------------
 
-  action early(e: Pre) {
-    requires pc == Ready  requires not provedReported()
-    pc = Early
-    errBad = if pe[e] == EKeep then errBad else pe[e] == EBad
-    follow = rep and e == we
+  action earlierIf(earlierEdge: EarlierEdge) {
+    requires phase == Ready
+    requires not provedReported()
+    phase = PastEarlierIf
+    errIsBadBeforeSwitch =
+      if earlierStore[earlierEdge] == NoErrorStore then errIsBadBeforeSwitch
+      else earlierStore[earlierEdge] == ErrorBad
+    onWitness = verdict and earlierEdge == witnessEarlierEdge
   }
 
-  action arm(k: Edge, n: Bool) {
-    requires pc == Early
-    pc = Returned
-    uv = uk[k] == Nil  uOut = uk[k] == Ext and n
-    eb = if ek[k] == EKeep then errBad else ek[k] == EBad
-    follow = follow and k == wk and not n
+  action takeArm(edge: Edge, outsideNil: Bool) {
+    requires phase == PastEarlierIf
+    phase = Returned
+    pointerIsNil = armPointer[edge] == Nil
+    pointerIsOutsideNil = armPointer[edge] == Outside and outsideNil
+    errorIsBad =
+      if armError[edge] == NoErrorStore then errIsBadBeforeSwitch
+      else armError[edge] == ErrorBad
+    onWitness = onWitness and edge == witnessEdge and not outsideNil
   }
 
-  terminal { pc == Returned }
+  terminal { phase == Returned }
 
   // --- what is proved -------------------------------------------------------------
 
-  invariant ReportMeansNilWithBad { (follow and pc == Returned) => (uv and eb) }
-  invariant NilWithBadIsReported { (pc == Returned and uv and eb) => reported() }
+  invariant ReportMeansNilWithBad {
+    (onWitness and phase == Returned) => (pointerIsNil and errorIsBad)
+  }
+  invariant NilWithBadIsReported {
+    (phase == Returned and pointerIsNil and errorIsBad) => reported()
+  }
 
-  // The auxiliary invariants of the proved spec are left out: a failing
-  // spec needs no induction, and each must break on its claim.
+  // The auxiliary invariants of the proved spec are left out. A failing
+  // spec needs no induction, and each spec must break on its claim.
 
   // --- witnesses ------------------------------------------------------------------
 
-  // if b { u = x } else { err = e }; return u, err: kept apart.
+  // `if b { u = x } else { err = e }; return u, err`: kept apart.
   reachable EdgesKeptApart {
-    pc == Returned and not reported() and uk[0] == Alloc and ek[0] == EKeep
-    and uk[1] == Nil and ek[1] == EGood and pe[0] == EKeep and pe[1] == EKeep
+    phase == Returned
+    and not reported()
+    and armPointer[0] == NonNilLiteral
+    and armError[0] == NoErrorStore
+    and armPointer[1] == Nil
+    and armError[1] == ErrorGood
+    and earlierStore[0] == NoErrorStore
+    and earlierStore[1] == NoErrorStore
   }
-  // The earlier if stores the nil error on one arm, and a non-nil one on the
-  // other: the load has two alternatives on the edge that keeps err.
+  // The earlier if stores the nil error on one arm and a non-nil one on the
+  // other. So the load has two alternatives on the edge that keeps err.
   reachable EarlierStoreReported {
-    pc == Returned and reported() and follow and ek[wk] == EKeep and pe[we] == EBad
-    and pe[1 - we] == EGood
+    phase == Returned
+    and reported()
+    and onWitness
+    and armError[witnessEdge] == NoErrorStore
+    and earlierStore[witnessEarlierEdge] == ErrorBad
+    and earlierStore[1 - witnessEarlierEdge] == ErrorGood
   }
   reachable ZeroThroughBoth {
-    pc == Returned and reported() and follow and ek[wk] == EKeep and pe[we] == EKeep
+    phase == Returned
+    and reported()
+    and onWitness
+    and armError[witnessEdge] == NoErrorStore
+    and earlierStore[witnessEarlierEdge] == NoErrorStore
   }
 }

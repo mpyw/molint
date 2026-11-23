@@ -1,10 +1,10 @@
 // When return-nil reports a nil pointer that comes with a trailing error or
 // bool, through φ-nodes. See "return-nil" in design/rules.md.
 //
-// A nil pointer with a trailing error is reported only when the error is also
-// a nil value. With a trailing bool, only when the bool is the constant true.
-// Both rules pair two results in the same way, so this spec models them once.
-// The second result, s, is one of:
+// A nil pointer with a trailing error is reported only when the error is
+// also a nil value. With a trailing bool, it is reported only when the bool
+// is the constant true. Both rules pair two results in the same way, so
+// this spec models them once. The second result, s, is one of:
 //
 //   Bad   the nil error (constant nil), or the constant true
 //   Good  a non-nil error (errors.New), or the constant false
@@ -14,313 +14,544 @@
 //
 //   u, s := U0, S0                    entry: nil, &T{}, f() / Bad, Good, Out
 //   for cond() {                      loop header H: two φ-nodes
-//     if b { u, s = X0, Y0 }          body join B, two arms; each arm sets u,
+//     if b { u, s = X0, Y0 }          body join B, two arms. Each arm sets u,
 //     else { u, s = X1, Y1 }          s, both, or neither
 //   }
 //   switch {                          the return's join J, three edges
 //   case c0: [check] u, s = U0', S0'  each operand is a constant, f(), or
-//   case c1: [check] ...              FromH: what the loop left. Each edge may
-//   default: [check] ...              check its u: u == nil, or u != nil
-//   }
+//   case c1: [check] ...              what the loop left (FromLoop). Each
+//   default: [check] ...              edge may check its u: u == nil, or
+//   }                                 u != nil
 //   return u, s
 //
-// The rule, from design/rules.md: a return is judged along each edge into the
+// In the state, U0 and S0 are entryPointer and entrySecond. X and Y are
+// armPointer and armSecond. The operands on J's edges are joinPointer and
+// joinSecond, and their checks are joinCheck.
+//
+// The rule, from design/rules.md, judges a return along each edge into the
 // φ-node block. When the values on an edge are φ-nodes of the same earlier
-// block, the same is done there, along one edge of that block, recursively.
-// Through H and B that is a path of rounds, and the pair read along it is the
-// last X and the last Y the path set, or U0 and S0. A value from outside is
-// not a nil value. A check on the edge settles u for the whole path: u != nil
-// stops the edge before its φ-nodes are taken apart, and u == nil makes u a
-// nil value on every path where it can be nil.
+// block, the rule does the same there, along one edge of that block. It
+// recurses. Through H and B, that is a path of rounds. The pair read along
+// it is the last X and the last Y the path set, or U0 and S0. A value from
+// outside is not a nil value. A check on the edge settles u for the whole
+// path. A check `u != nil` stops the edge before its φ-nodes are taken
+// apart. A check `u == nil` makes u a nil value on every path where u can
+// be nil.
 //
-// pair() in internal/flow/pair.go does the recursion, with a set of the pairs
-// it has seen so that the loop ends. Any pair a longer path gives, a path of
-// at most two rounds gives too: the round of the last store of one result,
-// then the round of the other. So the rule below looks at those paths only.
+// pair() in internal/flow/pair.go does the recursion. It keeps a set of the
+// pairs it has seen, so that the loop ends. A path of at most two rounds
+// gives every pair that a longer path gives. It takes the round of one
+// result's last store, then the round of the other's. So the rule below
+// looks at those paths only.
 //
-// The run keeps its own record of each value; the rule never reads it.
+// The run keeps its own record of each value. The rule never reads it.
 //
-// The claim. The rule reports exactly when some run returns a nil pointer that
-// is a constant's or passed a nil check, with a Bad constant:
+// The claim: the rule reports exactly when some run returns a nil pointer
+// that is a constant's or that passed a nil check, with a Bad constant.
 //
-//   ReportMeansNilWithBad   when reported, the witness run is never blocked,
-//                           and returns such a pair
-//   NilWithBadIsReported    whenever a run returns such a pair, it is reported
+//   ReportMeansNilWithBad   when reported, the witness run is never
+//                           blocked, and it returns such a pair
+//   NilWithBadIsReported    whenever a run returns such a pair, it is
+//                           reported
 //
-// The program is chosen by init from free choice bits, and so are the verdict
+// init chooses the program from free choice bits. It also fixes the verdict
 // and the witness, which read only the program.
 //
 // ASSUME-1: branches are taken as independent, as the rule defines. The gap
-//   when they correlate: nil_value_correlated.fsl.
-// ASSUME-2: every check can succeed and can fail on some run, as in
-//   nil_value.fsl. The gap: nil_value_dead_check.fsl.
+//   when they correlate is nil_value_correlated.fsl.
+// ASSUME-2: every check can pass on some run, as in nil_value.fsl. The gap
+//   is nil_value_dead_check.fsl.
 // ASSUME-3: u and s are φ-nodes, not loads of result variables. A bare
 //   return in a function with a defer loads them: pairing_stores.fsl. A φ
-//   paired with a load: pairing_load.fsl.
+//   paired with a load is pairing_load.fsl.
 // ASSUME-4 (representation only): two arms in the loop and three edges into
-//   J. The loop gives the recursion into an earlier block, and a pair whose
-//   two values come from different rounds.
+//   J. The loop gives the recursion into an earlier block. It also gives a
+//   pair whose two values come from different rounds.
 fsl 5
 spec Pairing {
-  enum UOp { UKeep, Nil, Alloc, Ext, UFromH }
-  enum SOp { SKeep, Bad, Good, Out, SFromH }
-  enum Guard { NoCheck, IsNil, NotNil }
-  enum Val { NilConst, NilExt, NilChecked, NonNil }
-  enum SVal { BadConst, BadExt, GoodVal }
-  enum Pc { Ready, Loop, Join, Returned, Aborted }
+  // KeepsPointer and KeepsSecond: the arm leaves that result as it was.
+  // NonNilLiteral is &T{}. Outside and SecondOutside are f(). The FromLoop
+  // operands are what the loop left in u or s.
+  enum PointerOperand { KeepsPointer, Nil, NonNilLiteral, Outside, PointerFromLoop }
+  enum SecondOperand { KeepsSecond, Bad, Good, SecondOutside, SecondFromLoop }
+  enum Check { NoCheck, IsNil, NotNil }
+  enum Value { NilConstant, NilOutside, NilChecked, NonNil }
+  enum SecondValue { BadConstant, BadOutside, GoodValue }
+  enum Phase { Ready, InLoop, AtJoin, Returned, Aborted }
   type Edge = 0..2
   type Arm = 0..1
-  // An arm, or 2: no arm.
-  type Step = 0..2
+  // An arm, or 2 for no arm.
+  type ArmOrNone = 0..2
   type Rounds = 0..2
-  type Bit = 0..29
+  type ChoiceBit = 0..29
 
   state {
-    pc: Pc,
-    ch: Map<Bit, Bool>,
+    phase: Phase,
+    choice: Map<ChoiceBit, Bool>,
     // the program
-    u0: UOp, s0: SOp, bu: Map<Arm, UOp>, bs: Map<Arm, SOp>,
-    ju: Map<Edge, UOp>, js: Map<Edge, SOp>, jg: Map<Edge, Guard>,
+    entryPointer: PointerOperand,
+    entrySecond: SecondOperand,
+    armPointer: Map<Arm, PointerOperand>,
+    armSecond: Map<Arm, SecondOperand>,
+    joinPointer: Map<Edge, PointerOperand>,
+    joinSecond: Map<Edge, SecondOperand>,
+    joinCheck: Map<Edge, Check>,
     // the verdict and its witness
-    rep: Bool, wk: Edge, wx: Step, wy: Step, wnil: Bool,
-    // the run: the values, and which store each came from
-    hu: Val, hs: SVal, uSrc: Step, sSrc: Step, uLater: Bool, lastArm: Step,
-    rounds: Rounds, taken: Edge, ru: Val, rs: SVal, follow: Bool
+    verdict: Bool,
+    witnessEdge: Edge,
+    witnessFirstArm: ArmOrNone,
+    witnessLaterArm: ArmOrNone,
+    witnessOutsideNil: Bool,
+    // the run: the values, and which arm's store each came from
+    loopPointer: Value,
+    loopSecond: SecondValue,
+    pointerArm: ArmOrNone,
+    secondArm: ArmOrNone,
+    pointerStoredLater: Bool,
+    lastArm: ArmOrNone,
+    rounds: Rounds,
+    takenEdge: Edge,
+    returnedPointer: Value,
+    returnedSecond: SecondValue,
+    onWitness: Bool
   }
 
-  def pickEntryU(i: Bit) = if ch[i] then Nil else if ch[i + 1] then Alloc else Ext
-  def pickEntryS(i: Bit) = if ch[i] then Bad else if ch[i + 1] then Good else Out
-  def pickArmU(i: Bit) =
-    if ch[i] then (if ch[i + 1] then UKeep else Nil) else (if ch[i + 1] then Alloc else Ext)
-  def pickArmS(i: Bit) =
-    if ch[i] then (if ch[i + 1] then SKeep else Bad) else (if ch[i + 1] then Good else Out)
-  def pickJoinU(i: Bit) =
-    if ch[i] then (if ch[i + 1] then Nil else Alloc) else (if ch[i + 1] then Ext else UFromH)
-  def pickJoinS(i: Bit) =
-    if ch[i] then (if ch[i + 1] then Bad else Good) else (if ch[i + 1] then Out else SFromH)
-  def pickGuard(i: Bit) = if ch[i] then NoCheck else if ch[i + 1] then IsNil else NotNil
+  def pickEntryPointer(bit: ChoiceBit) =
+    if choice[bit] then Nil
+    else if choice[bit + 1] then NonNilLiteral
+    else Outside
+  def pickEntrySecond(bit: ChoiceBit) =
+    if choice[bit] then Bad
+    else if choice[bit + 1] then Good
+    else SecondOutside
+  def pickArmPointer(bit: ChoiceBit) =
+    if choice[bit] then
+      if choice[bit + 1] then KeepsPointer
+      else Nil
+    else
+      if choice[bit + 1] then NonNilLiteral
+      else Outside
+  def pickArmSecond(bit: ChoiceBit) =
+    if choice[bit] then
+      if choice[bit + 1] then KeepsSecond
+      else Bad
+    else
+      if choice[bit + 1] then Good
+      else SecondOutside
+  def pickJoinPointer(bit: ChoiceBit) =
+    if choice[bit] then
+      if choice[bit + 1] then Nil
+      else NonNilLiteral
+    else
+      if choice[bit + 1] then Outside
+      else PointerFromLoop
+  def pickJoinSecond(bit: ChoiceBit) =
+    if choice[bit] then
+      if choice[bit + 1] then Bad
+      else Good
+    else
+      if choice[bit + 1] then SecondOutside
+      else SecondFromLoop
+  def pickCheck(bit: ChoiceBit) =
+    if choice[bit] then NoCheck
+    else if choice[bit + 1] then IsNil
+    else NotNil
 
   // --- the rule -------------------------------------------------------------------
 
-  // The last value set on the path x, then y.
-  def finU(x: Step, y: Step) =
-    if y != 2 and bu[y] != UKeep then bu[y] else if x != 2 and bu[x] != UKeep then bu[x] else u0
-  def finS(x: Step, y: Step) =
-    if y != 2 and bs[y] != SKeep then bs[y] else if x != 2 and bs[x] != SKeep then bs[x] else s0
-  def path(x: Step, y: Step) = x == 2 => y == 2
-  def uAt(k: Edge, x: Step, y: Step) = if ju[k] == UFromH then finU(x, y) else ju[k]
-  def sAt(k: Edge, x: Step, y: Step) = if js[k] == SFromH then finS(x, y) else js[k]
-  def uNilAt(k: Edge, x: Step, y: Step) =
-    if jg[k] == IsNil then (uAt(k, x, y) == Nil or uAt(k, x, y) == Ext)
-    else jg[k] == NoCheck and uAt(k, x, y) == Nil
-  def pairs(k: Edge, x: Step, y: Step) =
-    path(x, y) and uNilAt(k, x, y) and sAt(k, x, y) == Bad
-  def pairsOn(k: Edge) = exists x: Step { exists y: Step { pairs(k, x, y) } }
-  def reported() = exists k: Edge { pairsOn(k) }
+  // The last value set on the path: the arm first, then the arm later.
+  def lastPointer(first: ArmOrNone, later: ArmOrNone) =
+    if later != 2 and armPointer[later] != KeepsPointer then armPointer[later]
+    else if first != 2 and armPointer[first] != KeepsPointer then armPointer[first]
+    else entryPointer
+  def lastSecond(first: ArmOrNone, later: ArmOrNone) =
+    if later != 2 and armSecond[later] != KeepsSecond then armSecond[later]
+    else if first != 2 and armSecond[first] != KeepsSecond then armSecond[first]
+    else entrySecond
+  def isPath(first: ArmOrNone, later: ArmOrNone) = first == 2 => later == 2
+  def pointerOnEdge(edge: Edge, first: ArmOrNone, later: ArmOrNone) =
+    if joinPointer[edge] == PointerFromLoop then lastPointer(first, later) else joinPointer[edge]
+  def secondOnEdge(edge: Edge, first: ArmOrNone, later: ArmOrNone) =
+    if joinSecond[edge] == SecondFromLoop then lastSecond(first, later) else joinSecond[edge]
+  def pointerNilOnEdge(edge: Edge, first: ArmOrNone, later: ArmOrNone) =
+    if joinCheck[edge] == IsNil then (
+      pointerOnEdge(edge, first, later) == Nil
+      or pointerOnEdge(edge, first, later) == Outside
+    )
+    else joinCheck[edge] == NoCheck and pointerOnEdge(edge, first, later) == Nil
+  def pairs(edge: Edge, first: ArmOrNone, later: ArmOrNone) =
+    isPath(first, later)
+    and pointerNilOnEdge(edge, first, later)
+    and secondOnEdge(edge, first, later) == Bad
+  def pairsOnEdge(edge: Edge) =
+    exists first: ArmOrNone { exists later: ArmOrNone { pairs(edge, first, later) } }
+  def reported() = exists edge: Edge { pairsOnEdge(edge) }
 
-  // The witness: the first edge and path the rule found.
-  def firstEdge() = if pairsOn(0) then 0 else if pairsOn(1) then 1 else 2
-  def firstX(k: Edge) =
-    if exists y: Step { pairs(k, 0, y) } then 0 else if exists y: Step { pairs(k, 1, y) } then 1 else 2
-  def firstY(k: Edge, x: Step) = if pairs(k, x, 0) then 0 else if pairs(k, x, 1) then 1 else 2
-  def len(x: Step, y: Step) = (if x != 2 then 1 else 0) + (if y != 2 then 1 else 0)
+  // The witness: the first edge and path that the rule found.
+  def firstEdge() =
+    if pairsOnEdge(0) then 0
+    else if pairsOnEdge(1) then 1
+    else 2
+  def firstArmOfPath(edge: Edge) =
+    if exists later: ArmOrNone { pairs(edge, 0, later) } then 0
+    else if exists later: ArmOrNone { pairs(edge, 1, later) } then 1
+    else 2
+  def laterArmOfPath(edge: Edge, first: ArmOrNone) =
+    if pairs(edge, first, 0) then 0
+    else if pairs(edge, first, 1) then 1
+    else 2
+  def pathLength(first: ArmOrNone, later: ArmOrNone) =
+    (if first != 2 then 1 else 0) + (if later != 2 then 1 else 0)
 
-  // --- ASSUME-2: every check can succeed and fail ---------------------------------
+  // --- ASSUME-2: every check can pass ---------------------------------------------
 
-  def mayNilU(o: UOp) = o == Nil or o == Ext
-  def mayNonNilU(o: UOp) = o == Alloc or o == Ext
-  def loopMay(nilSide: Bool) =
-    (if nilSide then mayNilU(u0) else mayNonNilU(u0))
-    or (exists j: Arm { if nilSide then mayNilU(bu[j]) else mayNonNilU(bu[j]) })
-  def live(k: Edge) =
-    (jg[k] == IsNil => (if ju[k] == UFromH then loopMay(true) else mayNilU(ju[k])))
-    and (jg[k] == NotNil => (if ju[k] == UFromH then loopMay(false) else mayNonNilU(ju[k])))
-  def configOk() = forall k: Edge { live(k) }
+  def pointerMayBeNil(operand: PointerOperand) = operand == Nil or operand == Outside
+  def pointerMayBeNonNil(operand: PointerOperand) = operand == NonNilLiteral or operand == Outside
+  def loopPointerMay(nilSide: Bool) =
+    (if nilSide then pointerMayBeNil(entryPointer) else pointerMayBeNonNil(entryPointer))
+    or (exists arm: Arm {
+      if nilSide then pointerMayBeNil(armPointer[arm]) else pointerMayBeNonNil(armPointer[arm])
+    })
+  def checkCanPass(edge: Edge) =
+    (joinCheck[edge] == IsNil => (
+      if joinPointer[edge] == PointerFromLoop then loopPointerMay(true)
+      else pointerMayBeNil(joinPointer[edge])))
+    and (joinCheck[edge] == NotNil => (
+      if joinPointer[edge] == PointerFromLoop then loopPointerMay(false)
+      else pointerMayBeNonNil(joinPointer[edge])))
+  def everyCheckCanPass() = forall edge: Edge { checkCanPass(edge) }
 
   init {
-    pc = Ready
-    u0 = pickEntryU(0)  s0 = pickEntryS(2)
-    forall j: Arm { bu[j] = pickArmU(4 + 4 * j)  bs[j] = pickArmS(6 + 4 * j) }
-    forall k: Edge { ju[k] = pickJoinU(12 + 6 * k)  js[k] = pickJoinS(14 + 6 * k)  jg[k] = pickGuard(16 + 6 * k) }
+    phase = Ready
+    entryPointer = pickEntryPointer(0)
+    entrySecond = pickEntrySecond(2)
+    forall arm: Arm {
+      armPointer[arm] = pickArmPointer(4 + 4 * arm)
+      armSecond[arm] = pickArmSecond(6 + 4 * arm)
+    }
+    forall edge: Edge {
+      joinPointer[edge] = pickJoinPointer(12 + 6 * edge)
+      joinSecond[edge] = pickJoinSecond(14 + 6 * edge)
+      joinCheck[edge] = pickCheck(16 + 6 * edge)
+    }
     // The verdict and the witness read only the program set above.
-    rep = reported()  wk = firstEdge()  wx = firstX(firstEdge())
-    wy = firstY(firstEdge(), firstX(firstEdge()))  wnil = jg[firstEdge()] == IsNil
-    hu = NonNil  hs = GoodVal  uSrc = 2  sSrc = 2  uLater = false  lastArm = 2
-    rounds = 0  taken = 0  ru = NonNil  rs = GoodVal  follow = false
+    verdict = reported()
+    witnessEdge = firstEdge()
+    witnessFirstArm = firstArmOfPath(firstEdge())
+    witnessLaterArm = laterArmOfPath(firstEdge(), firstArmOfPath(firstEdge()))
+    witnessOutsideNil = joinCheck[firstEdge()] == IsNil
+    loopPointer = NonNil
+    loopSecond = GoodValue
+    pointerArm = 2
+    secondArm = 2
+    pointerStoredLater = false
+    lastArm = 2
+    rounds = 0
+    takenEdge = 0
+    returnedPointer = NonNil
+    returnedSecond = GoodValue
+    onWitness = false
   }
 
   // --- the run --------------------------------------------------------------------
 
-  def ev(o: UOp, nilOut: Bool, old: Val) =
-    if o == Nil then NilConst else if o == Alloc then NonNil
-    else if o == Ext then (if nilOut then NilExt else NonNil) else old
-  def evs(o: SOp, badOut: Bool, old: SVal) =
-    if o == Bad then BadConst else if o == Good then GoodVal
-    else if o == Out then (if badOut then BadExt else GoodVal) else old
-  def passes(c: Guard, v: Val) =
-    if c == IsNil then v != NonNil else if c == NotNil then v == NonNil else true
-  def mark(c: Guard, v: Val) = if c == IsNil and v == NilExt then NilChecked else v
-  def goodNil(v: Val) = v == NilConst or v == NilChecked
+  def pointerValue(operand: PointerOperand, outsideIsNil: Bool, old: Value) =
+    if operand == Nil then NilConstant
+    else if operand == NonNilLiteral then NonNil
+    else if operand == Outside then
+      if outsideIsNil then NilOutside
+      else NonNil
+    else old
+  def secondValue(operand: SecondOperand, outsideIsBad: Bool, old: SecondValue) =
+    if operand == Bad then BadConstant
+    else if operand == Good then GoodValue
+    else if operand == SecondOutside then
+      if outsideIsBad then BadOutside
+      else GoodValue
+    else old
+  def passesCheck(check: Check, value: Value) =
+    if check == IsNil then value != NonNil
+    else if check == NotNil then value == NonNil
+    else true
+  def afterCheck(check: Check, value: Value) =
+    if check == IsNil and value == NilOutside then NilChecked else value
+  def reportableNil(value: Value) = value == NilConstant or value == NilChecked
 
-  action enter(nu: Bool, bsOut: Bool) {
-    requires pc == Ready  requires configOk()
-    pc = Loop
-    hu = ev(u0, nu, NonNil)  hs = evs(s0, bsOut, GoodVal)
-    follow = rep and nu == wnil and not bsOut
+  action enter(outsideNil: Bool, outsideBad: Bool) {
+    requires phase == Ready
+    requires everyCheckCanPass()
+    phase = InLoop
+    loopPointer = pointerValue(entryPointer, outsideNil, NonNil)
+    loopSecond = secondValue(entrySecond, outsideBad, GoodValue)
+    onWitness = verdict and outsideNil == witnessOutsideNil and not outsideBad
   }
 
-  action round(j: Arm, nu: Bool, bsOut: Bool) {
-    requires pc == Loop
-    hu = ev(bu[j], nu, hu)  hs = evs(bs[j], bsOut, hs)
-    uSrc = if bu[j] != UKeep then j else uSrc
-    sSrc = if bs[j] != SKeep then j else sSrc
-    uLater = if bu[j] != UKeep and bs[j] == SKeep then true
-             else if bs[j] != SKeep then false else uLater
-    lastArm = j
+  action round(arm: Arm, outsideNil: Bool, outsideBad: Bool) {
+    requires phase == InLoop
+    loopPointer = pointerValue(armPointer[arm], outsideNil, loopPointer)
+    loopSecond = secondValue(armSecond[arm], outsideBad, loopSecond)
+    pointerArm = if armPointer[arm] != KeepsPointer then arm else pointerArm
+    secondArm = if armSecond[arm] != KeepsSecond then arm else secondArm
+    pointerStoredLater =
+      if armPointer[arm] != KeepsPointer and armSecond[arm] == KeepsSecond then true
+      else if armSecond[arm] != KeepsSecond then false
+      else pointerStoredLater
+    lastArm = arm
     rounds = min(rounds + 1, 2)
-    follow = follow and rounds < len(wx, wy) and (if rounds == 0 then j == wx else j == wy)
-             and nu == wnil and not bsOut
+    onWitness = onWitness
+                and rounds < pathLength(witnessFirstArm, witnessLaterArm)
+                and (if rounds == 0 then arm == witnessFirstArm else arm == witnessLaterArm)
+                and outsideNil == witnessOutsideNil
+                and not outsideBad
   }
 
   action leave() {
-    requires pc == Loop
-    pc = Join
-    follow = follow and rounds == len(wx, wy)
+    requires phase == InLoop
+    phase = AtJoin
+    onWitness = onWitness and rounds == pathLength(witnessFirstArm, witnessLaterArm)
   }
 
-  def uOn(k: Edge, nu: Bool) = if ju[k] == UFromH then hu else ev(ju[k], nu, NonNil)
-  def sOn(k: Edge, bsOut: Bool) = if js[k] == SFromH then hs else evs(js[k], bsOut, GoodVal)
+  def pointerAtJoin(edge: Edge, outsideNil: Bool) =
+    if joinPointer[edge] == PointerFromLoop then loopPointer
+    else pointerValue(joinPointer[edge], outsideNil, NonNil)
+  def secondAtJoin(edge: Edge, outsideBad: Bool) =
+    if joinSecond[edge] == SecondFromLoop then loopSecond
+    else secondValue(joinSecond[edge], outsideBad, GoodValue)
 
-  action take(k: Edge, nu: Bool, bsOut: Bool) {
-    requires pc == Join  requires passes(jg[k], uOn(k, nu))
-    pc = Returned  taken = k
-    ru = mark(jg[k], uOn(k, nu))  rs = sOn(k, bsOut)
-    follow = follow and k == wk and nu == wnil and not bsOut
+  action take(edge: Edge, outsideNil: Bool, outsideBad: Bool) {
+    requires phase == AtJoin
+    requires passesCheck(joinCheck[edge], pointerAtJoin(edge, outsideNil))
+    phase = Returned
+    takenEdge = edge
+    returnedPointer = afterCheck(joinCheck[edge], pointerAtJoin(edge, outsideNil))
+    returnedSecond = secondAtJoin(edge, outsideBad)
+    onWitness = onWitness
+                and edge == witnessEdge
+                and outsideNil == witnessOutsideNil
+                and not outsideBad
   }
 
   action abort() {
-    requires pc == Join
-    pc = Aborted  follow = false
+    requires phase == AtJoin
+    phase = Aborted
+    onWitness = false
   }
 
-  terminal { pc == Returned or pc == Aborted or (pc == Ready and not configOk()) }
+  terminal {
+    phase == Returned
+    or phase == Aborted
+    or (phase == Ready and not everyCheckCanPass())
+  }
 
   // --- what is proved -------------------------------------------------------------
 
-  // Never blocked: the witness's edge passes its check, and it returns the pair.
+  // Never blocked: the witness's edge passes its check, and the witness
+  // returns the pair.
   invariant ReportMeansNilWithBad {
-    (follow and pc == Join => passes(jg[wk], uOn(wk, wnil)))
-    and (follow and pc == Returned => (goodNil(ru) and rs == BadConst))
+    (onWitness and phase == AtJoin =>
+      passesCheck(joinCheck[witnessEdge], pointerAtJoin(witnessEdge, witnessOutsideNil)))
+    and (onWitness and phase == Returned =>
+      (reportableNil(returnedPointer) and returnedSecond == BadConstant))
   }
   invariant NilWithBadIsReported {
-    (pc == Returned and goodNil(ru) and rs == BadConst) => reported()
+    (phase == Returned and reportableNil(returnedPointer) and returnedSecond == BadConstant)
+    => reported()
   }
 
   // --- auxiliary ------------------------------------------------------------------
 
-  def curU() = if uSrc == 2 then u0 else bu[uSrc]
-  def curS() = if sSrc == 2 then s0 else bs[sSrc]
+  def heldPointerStore() = if pointerArm == 2 then entryPointer else armPointer[pointerArm]
+  def heldSecondStore() = if secondArm == 2 then entrySecond else armSecond[secondArm]
   // The path of at most two rounds that leaves what the run holds.
-  def sx() =
-    if uSrc == 2 and sSrc == 2 then lastArm else if uSrc == 2 then sSrc
-    else if sSrc == 2 or uSrc == sSrc then uSrc else (if uLater then sSrc else uSrc)
-  def sy() = if uSrc == 2 or sSrc == 2 or uSrc == sSrc then 2 else (if uLater then uSrc else sSrc)
-  def valOf(o: UOp, v: Val) =
-    (v == NilConst => o == Nil) and (v == NilExt => o == Ext) and (v == NonNil => (o == Alloc or o == Ext))
-    and v != NilChecked
-  def svalOf(o: SOp, v: SVal) =
-    (v == BadConst => o == Bad) and (v == BadExt => o == Out) and (v == GoodVal => (o == Good or o == Out))
+  def heldFirstArm() =
+    if pointerArm == 2 and secondArm == 2 then lastArm
+    else if pointerArm == 2 then secondArm
+    else if secondArm == 2 or pointerArm == secondArm then pointerArm
+    else if pointerStoredLater then secondArm
+    else pointerArm
+  def heldLaterArm() =
+    if pointerArm == 2 or secondArm == 2 or pointerArm == secondArm then 2
+    else if pointerStoredLater then pointerArm
+    else secondArm
+  def pointerValueFits(operand: PointerOperand, value: Value) =
+    (value == NilConstant => operand == Nil)
+    and (value == NilOutside => operand == Outside)
+    and (value == NonNil => (operand == NonNilLiteral or operand == Outside))
+    and value != NilChecked
+  def secondValueFits(operand: SecondOperand, value: SecondValue) =
+    (value == BadConstant => operand == Bad)
+    and (value == BadOutside => operand == SecondOutside)
+    and (value == GoodValue => (operand == Good or operand == SecondOutside))
 
   invariant ProgramShape {
-    u0 != UKeep and u0 != UFromH and s0 != SKeep and s0 != SFromH
-    and (forall j: Arm { bu[j] != UFromH and bs[j] != SFromH })
-    and (forall k: Edge { ju[k] != UKeep and js[k] != SKeep })
-    and (pc != Ready => configOk())
+    entryPointer != KeepsPointer
+    and entryPointer != PointerFromLoop
+    and entrySecond != KeepsSecond
+    and entrySecond != SecondFromLoop
+    and (forall arm: Arm { armPointer[arm] != PointerFromLoop and armSecond[arm] != SecondFromLoop })
+    and (forall edge: Edge { joinPointer[edge] != KeepsPointer and joinSecond[edge] != KeepsSecond })
+    and (phase != Ready => everyCheckCanPass())
   }
   invariant VerdictFixed {
-    rep == reported() and wk == firstEdge() and wx == firstX(firstEdge())
-    and wy == firstY(firstEdge(), firstX(firstEdge())) and wnil == (jg[firstEdge()] == IsNil)
+    verdict == reported()
+    and witnessEdge == firstEdge()
+    and witnessFirstArm == firstArmOfPath(firstEdge())
+    and witnessLaterArm == laterArmOfPath(firstEdge(), firstArmOfPath(firstEdge()))
+    and witnessOutsideNil == (joinCheck[firstEdge()] == IsNil)
   }
   invariant FreshBeforeRun {
-    pc == Ready => (uSrc == 2 and sSrc == 2 and lastArm == 2 and rounds == 0 and not follow)
+    phase == Ready => (
+      pointerArm == 2
+      and secondArm == 2
+      and lastArm == 2
+      and rounds == 0
+      and not onWitness
+    )
   }
-  invariant FollowOnlyWhenReported { follow => rep }
-  invariant WitnessPath { rep => (path(wx, wy) and pairs(wk, wx, wy)) }
-  invariant RunValues { pc != Ready => (valOf(curU(), hu) and svalOf(curS(), hs)) }
+  invariant FollowOnlyWhenReported { onWitness => verdict }
+  invariant WitnessPath {
+    verdict => (
+      isPath(witnessFirstArm, witnessLaterArm)
+      and pairs(witnessEdge, witnessFirstArm, witnessLaterArm)
+    )
+  }
+  invariant RunValues {
+    phase != Ready => (
+      pointerValueFits(heldPointerStore(), loopPointer)
+      and secondValueFits(heldSecondStore(), loopSecond)
+    )
+  }
   invariant WitnessValues {
-    (follow and pc != Ready) => (
-      (curU() == Ext => hu == (if wnil then NilExt else NonNil)) and (curS() == Out => hs == GoodVal)
+    (onWitness and phase != Ready) => (
+      (heldPointerStore() == Outside =>
+        loopPointer == (if witnessOutsideNil then NilOutside else NonNil))
+      and (heldSecondStore() == SecondOutside => loopSecond == GoodValue)
     )
   }
   invariant Realizable {
-    pc != Ready => (curU() == finU(sx(), sy()) and curS() == finS(sx(), sy()) and path(sx(), sy()))
+    phase != Ready => (
+      heldPointerStore() == lastPointer(heldFirstArm(), heldLaterArm())
+      and heldSecondStore() == lastSecond(heldFirstArm(), heldLaterArm())
+      and isPath(heldFirstArm(), heldLaterArm())
+    )
   }
   invariant SourcesStore {
-    (uSrc != 2 => bu[uSrc] != UKeep) and (sSrc != 2 => bs[sSrc] != SKeep)
-    and ((uSrc == 2 and sSrc != 2) => bu[sSrc] == UKeep)
-    and ((sSrc == 2 and uSrc != 2) => bs[uSrc] == SKeep)
-    and ((uSrc != 2 and sSrc != 2 and uSrc != sSrc) =>
-          (if uLater then bs[uSrc] == SKeep else bu[sSrc] == UKeep))
-    and ((rounds >= 1) => lastArm != 2) and (rounds == 0 => (lastArm == 2 and uSrc == 2 and sSrc == 2))
-    and ((uSrc == 2 and sSrc == 2 and lastArm != 2) => (bu[lastArm] == UKeep and bs[lastArm] == SKeep))
+    (pointerArm != 2 => armPointer[pointerArm] != KeepsPointer)
+    and (secondArm != 2 => armSecond[secondArm] != KeepsSecond)
+    and ((pointerArm == 2 and secondArm != 2) => armPointer[secondArm] == KeepsPointer)
+    and ((secondArm == 2 and pointerArm != 2) => armSecond[pointerArm] == KeepsSecond)
+    and ((pointerArm != 2 and secondArm != 2 and pointerArm != secondArm) => (
+      if pointerStoredLater then armSecond[pointerArm] == KeepsSecond
+      else armPointer[secondArm] == KeepsPointer
+    ))
+    and ((rounds >= 1) => lastArm != 2)
+    and (rounds == 0 => (lastArm == 2 and pointerArm == 2 and secondArm == 2))
+    and ((pointerArm == 2 and secondArm == 2 and lastArm != 2) =>
+          (armPointer[lastArm] == KeepsPointer and armSecond[lastArm] == KeepsSecond))
   }
   invariant WitnessInOrder {
-    (follow and pc != Ready) => (
-      rounds <= len(wx, wy)
-      and (rounds == 0 => (curU() == u0 and curS() == s0))
-      and (rounds == 1 => (curU() == finU(wx, 2) and curS() == finS(wx, 2)))
-      and (rounds == 2 => (curU() == finU(wx, wy) and curS() == finS(wx, wy)))
-      and (pc != Loop => rounds == len(wx, wy))
+    (onWitness and phase != Ready) => (
+      rounds <= pathLength(witnessFirstArm, witnessLaterArm)
+      and (rounds == 0 => (
+        heldPointerStore() == entryPointer
+        and heldSecondStore() == entrySecond))
+      and (rounds == 1 => (
+        heldPointerStore() == lastPointer(witnessFirstArm, 2)
+        and heldSecondStore() == lastSecond(witnessFirstArm, 2)))
+      and (rounds == 2 => (
+        heldPointerStore() == lastPointer(witnessFirstArm, witnessLaterArm)
+        and heldSecondStore() == lastSecond(witnessFirstArm, witnessLaterArm)))
+      and (phase != InLoop => rounds == pathLength(witnessFirstArm, witnessLaterArm))
     )
   }
   invariant ReturnedTraced {
-    pc == Returned => (
-      (ju[taken] == UFromH => (
-        (ru == hu or (ru == NilChecked and hu == NilExt and jg[taken] == IsNil))
-        and passes(jg[taken], hu)))
-      and (js[taken] == SFromH => rs == hs)
-      and (ju[taken] != UFromH => ((ru == NilConst => ju[taken] == Nil)
-            and (ru == NilChecked => (jg[taken] == IsNil and ju[taken] == Ext))))
-      and (js[taken] != SFromH => (rs == BadConst => js[taken] == Bad))
-      and (jg[taken] == NotNil => ru == NonNil)
-      and (ru == NilChecked => jg[taken] == IsNil)
+    phase == Returned => (
+      (joinPointer[takenEdge] == PointerFromLoop => (
+        (returnedPointer == loopPointer
+          or (returnedPointer == NilChecked
+              and loopPointer == NilOutside
+              and joinCheck[takenEdge] == IsNil))
+        and passesCheck(joinCheck[takenEdge], loopPointer)))
+      and (joinSecond[takenEdge] == SecondFromLoop => returnedSecond == loopSecond)
+      and (joinPointer[takenEdge] != PointerFromLoop => (
+        (returnedPointer == NilConstant => joinPointer[takenEdge] == Nil)
+        and (returnedPointer == NilChecked =>
+              (joinCheck[takenEdge] == IsNil and joinPointer[takenEdge] == Outside))))
+      and (joinSecond[takenEdge] != SecondFromLoop =>
+            (returnedSecond == BadConstant => joinSecond[takenEdge] == Bad))
+      and (joinCheck[takenEdge] == NotNil => returnedPointer == NonNil)
+      and (returnedPointer == NilChecked => joinCheck[takenEdge] == IsNil)
     )
   }
 
   // --- witnesses ------------------------------------------------------------------
 
-  // var u *T; var err error; if b { u = x } else { err = e }; return u, err
-  // (one round of the loop, then the edge that brings both from H).
+  def bothFromLoop(edge: Edge) =
+    joinPointer[edge] == PointerFromLoop and joinSecond[edge] == SecondFromLoop
+
+  // `var u *T; var err error; if b { u = x } else { err = e }; return u,
+  // err`. That is one round of the loop, then the edge that brings both
+  // from H.
   reachable EdgesKeptApart {
-    pc == Returned and not reported() and u0 == Nil and s0 == Bad
-    and bu[0] == Alloc and bs[0] == SKeep and bu[1] == UKeep and bs[1] == Good
-    and ju[taken] == UFromH and js[taken] == SFromH and rounds == 1
+    phase == Returned
+    and not reported()
+    and entryPointer == Nil
+    and entrySecond == Bad
+    and armPointer[0] == NonNilLiteral
+    and armSecond[0] == KeepsSecond
+    and armPointer[1] == KeepsPointer
+    and armSecond[1] == Good
+    and bothFromLoop(takenEdge)
+    and rounds == 1
   }
-  // A nil set in one round, a nil error in the next: reported.
+  // A nil set in one round and a nil error in the next: reported.
   reachable PairAcrossRounds {
-    pc == Returned and follow and len(wx, wy) == 2 and ju[wk] == UFromH and js[wk] == SFromH
-    and not pairs(wk, wx, 2) and not pairs(wk, wy, 2)
+    phase == Returned
+    and onWitness
+    and pathLength(witnessFirstArm, witnessLaterArm) == 2
+    and bothFromLoop(witnessEdge)
+    and not pairs(witnessEdge, witnessFirstArm, 2)
+    and not pairs(witnessEdge, witnessLaterArm, 2)
   }
   // if u != nil { return u, s }: the check settles u before H is taken apart.
   reachable CheckStopsThePair {
-    pc == Returned and not reported() and jg[taken] == NotNil and ju[taken] == UFromH
-    and js[taken] == SFromH and (exists x: Step { exists y: Step { path(x, y)
-      and finU(x, y) == Nil and finS(x, y) == Bad } })
+    phase == Returned
+    and not reported()
+    and joinCheck[takenEdge] == NotNil
+    and bothFromLoop(takenEdge)
+    and (exists first: ArmOrNone { exists later: ArmOrNone {
+      isPath(first, later) and lastPointer(first, later) == Nil and lastSecond(first, later) == Bad
+    } })
   }
-  // u := f(); if u == nil { return u, nil }: a value from before J, checked
-  // on the edge.
+  // `u := f(); if u == nil { return u, nil }`: a value from before J,
+  // checked on the edge.
   reachable CheckedOutsideWithBad {
-    pc == Returned and follow and jg[wk] == IsNil and ju[wk] == Ext and ru == NilChecked
+    phase == Returned
+    and onWitness
+    and joinCheck[witnessEdge] == IsNil
+    and joinPointer[witnessEdge] == Outside
+    and returnedPointer == NilChecked
   }
   reachable CheckedLoopValueWithBad {
-    pc == Returned and follow and jg[wk] == IsNil and ju[wk] == UFromH and ru == NilChecked
+    phase == Returned
+    and onWitness
+    and joinCheck[witnessEdge] == IsNil
+    and joinPointer[witnessEdge] == PointerFromLoop
+    and returnedPointer == NilChecked
   }
-  // return nil, err with err from outside: not reported. The gap.
+  // return nil, err with err from outside: not reported. This is the gap.
   reachable OutsideErrorNotReported {
-    pc == Returned and not reported() and ru == NilConst and rs == BadExt
+    phase == Returned
+    and not reported()
+    and returnedPointer == NilConstant
+    and returnedSecond == BadOutside
   }
-  // return u, nil with u from outside, unchecked: not reported. The gap.
+  // return u, nil with u from outside and unchecked: not reported. This is
+  // the gap.
   reachable OutsideNilNotReported {
-    pc == Returned and not reported() and ru == NilExt and rs == BadConst
+    phase == Returned
+    and not reported()
+    and returnedPointer == NilOutside
+    and returnedSecond == BadConstant
   }
 }

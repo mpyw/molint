@@ -1,36 +1,46 @@
-// Pairing a φ-node with a load: return-nil when the error is a variable SSA
-// does not lift, read at the return. See "return-nil" in design/rules.md.
+// Pairing a φ-node with a load. This is return-nil when the error is a
+// variable that SSA does not lift, read at the return. See "return-nil" in
+// design/rules.md.
 //
 // A function literal that only loads err keeps err in memory, and keeps it
-// followed. The return then pairs a φ-node u of its block with a load of err.
-// pairStep in internal/flow/pair.go reads that load, along each edge into the
-// block, as the stores that reach the end of that edge's predecessor: one
-// alternative per store.
+// followed. The return then pairs a φ-node u of its block with a load of
+// err. pairStep in internal/flow/pair.go reads that load along each edge
+// into the block. On an edge, the load is the stores that reach the end of
+// that edge's predecessor, one alternative per store. This model puts the
+// load in the φ-node's own block.
 //
 // The program:
 //
 //   var u *T
 //   var err error                     the Alloc: a store of nil
 //   defer func() { log(err) }()       only loads err
-//   if a { err = P0 } else { err = P1 }   an earlier if; each arm may store
-//   switch {                          three edges into the return's block;
-//   case c0: u = U0; err = E0         each arm sets u, and may store err
-//   case c1: u = U1; err = E1
-//   default: u = U2; err = E2
+//   if a { err = P0 } else { err = P1 }   an earlier if. Each arm may store
+//   switch {                          three edges into the return's block.
+//   case c0: u, err = U0, E0          Each arm sets u, and may store err
+//   case c1: u, err = U1, E1
+//   default: u, err = U2, E2
 //   }
 //   return u, err                     u is a φ-node, err a load
 //
+// In the state, P0 and P1 are earlierStore. U0..U2 are armPointer, and
+// E0..E2 are armError.
+//
 // The stores into err are Bad (nil), Good (errors.New) or Out (f()), or
-// nothing (Keep). u is nil, &T{} or f().
+// nothing (NoErrorStore). u is nil, &T{} or f().
 //
-// `var u *T; var err error; defer func() { log(err) }(); if b { u = x } else
-// { err = e }; return u, err` is this shape, and it is not reported: on the
-// edge where u is nil, err holds e.
+// This program has the shape, and it is not reported. On the edge where u
+// is nil, err holds e:
 //
-// The rule, reported below: some edge k brings the nil constant for u, and a
-// store reaching the end of its predecessor stores Bad: E_k itself, or, when
-// arm k stores nothing, a store reaching the switch, P0, P1 or the Alloc's
-// zero.
+//   var u *T
+//   var err error
+//   defer func() { log(err) }()
+//   if b { u = x } else { err = e }
+//   return u, err
+//
+// The rule, reported below, needs some edge that brings the nil constant
+// for u. A store that reaches the end of its predecessor must store Bad.
+// That store is the arm's own E. When the arm stores nothing, it is a
+// store that reaches the switch: P0, P1 or the Alloc's zero.
 //
 // The run keeps its own record: whether u and err hold the constants.
 //
@@ -41,103 +51,178 @@
 //   NilWithBadIsReported    whenever a run returns them, it is reported
 //
 // ASSUME-1: branches are taken as independent, as the rule defines.
-// ASSUME-2 (representation only): the trailing result is an error; a bool
+// ASSUME-2 (representation only): the trailing result is an error. A bool
 //   pairs the same way (pairing.fsl, pairing_stores.fsl).
 fsl 5
 spec PairingLoad {
-  enum UOp { Nil, Alloc, Ext }
-  enum EOp { EKeep, EBad, EGood, EOut }
-  enum Pc { Ready, Early, Returned }
+  // NonNilLiteral is &T{}, and Outside is f(). NoErrorStore: the arm
+  // stores nothing into err.
+  enum PointerOperand { Nil, NonNilLiteral, Outside }
+  enum ErrorStore { NoErrorStore, ErrorBad, ErrorGood, ErrorOutside }
+  enum Phase { Ready, PastEarlierIf, Returned }
   type Edge = 0..2
-  type Pre = 0..1
-  type Bit = 0..15
+  type EarlierEdge = 0..1
+  type ChoiceBit = 0..15
 
   state {
-    pc: Pc,
-    ch: Map<Bit, Bool>,
+    phase: Phase,
+    choice: Map<ChoiceBit, Bool>,
     // the program
-    pe: Map<Pre, EOp>, uk: Map<Edge, UOp>, ek: Map<Edge, EOp>,
+    earlierStore: Map<EarlierEdge, ErrorStore>,
+    armPointer: Map<Edge, PointerOperand>,
+    armError: Map<Edge, ErrorStore>,
     // the verdict and its witness
-    rep: Bool, wk: Edge, we: Pre,
+    verdict: Bool,
+    witnessEdge: Edge,
+    witnessEarlierEdge: EarlierEdge,
     // the run's own record
-    errBad: Bool, uv: Bool, uOut: Bool, eb: Bool, follow: Bool
+    errIsBadBeforeSwitch: Bool,
+    pointerIsNil: Bool,
+    pointerIsOutsideNil: Bool,
+    errorIsBad: Bool,
+    onWitness: Bool
   }
 
-  def pickU(i: Bit) = if ch[i] then Nil else if ch[i + 1] then Alloc else Ext
-  def pickE(i: Bit) =
-    if ch[i] then (if ch[i + 1] then EKeep else EBad) else (if ch[i + 1] then EGood else EOut)
+  def pickPointer(bit: ChoiceBit) =
+    if choice[bit] then Nil
+    else if choice[bit + 1] then NonNilLiteral
+    else Outside
+  def pickErrorStore(bit: ChoiceBit) =
+    if choice[bit] then
+      if choice[bit + 1] then NoErrorStore
+      else ErrorBad
+    else
+      if choice[bit + 1] then ErrorGood
+      else ErrorOutside
 
   // --- the rule -------------------------------------------------------------------
 
   // The Alloc's zero is the nil error.
-  def badStore(s: EOp) = s == EBad or s == EKeep
-  // The stores reaching the end of arm k's block, read on the path through
-  // the earlier if's edge e.
-  def reachesBad(k: Edge, e: Pre) = if ek[k] != EKeep then ek[k] == EBad else badStore(pe[e])
-  def pairs(k: Edge, e: Pre) = uk[k] == Nil and reachesBad(k, e)
-  def reported() = exists k: Edge { exists e: Pre { pairs(k, e) } }
+  def storeIsBad(store: ErrorStore) = store == ErrorBad or store == NoErrorStore
+  // The stores that reach the end of an arm's block, read on the path
+  // through the earlier if's edge.
+  def badReachesArmEnd(edge: Edge, earlierEdge: EarlierEdge) =
+    if armError[edge] != NoErrorStore then armError[edge] == ErrorBad
+    else storeIsBad(earlierStore[earlierEdge])
+  def pairs(edge: Edge, earlierEdge: EarlierEdge) =
+    armPointer[edge] == Nil and badReachesArmEnd(edge, earlierEdge)
+  def reported() =
+    exists edge: Edge { exists earlierEdge: EarlierEdge { pairs(edge, earlierEdge) } }
   def firstEdge() =
-    if exists e: Pre { pairs(0, e) } then 0 else if exists e: Pre { pairs(1, e) } then 1 else 2
-  def firstPre(k: Edge) = if pairs(k, 0) then 0 else 1
+    if exists earlierEdge: EarlierEdge { pairs(0, earlierEdge) } then 0
+    else if exists earlierEdge: EarlierEdge { pairs(1, earlierEdge) } then 1
+    else 2
+  def firstEarlierEdge(edge: Edge) = if pairs(edge, 0) then 0 else 1
 
   init {
-    pc = Ready
-    forall e: Pre { pe[e] = pickE(2 * e) }
-    forall k: Edge { uk[k] = pickU(4 + 4 * k)  ek[k] = pickE(6 + 4 * k) }
-    rep = reported()  wk = firstEdge()  we = firstPre(firstEdge())
-    errBad = true  uv = false  uOut = false  eb = false  follow = false
+    phase = Ready
+    forall earlierEdge: EarlierEdge {
+      earlierStore[earlierEdge] = pickErrorStore(2 * earlierEdge)
+    }
+    forall edge: Edge {
+      armPointer[edge] = pickPointer(4 + 4 * edge)
+      armError[edge] = pickErrorStore(6 + 4 * edge)
+    }
+    verdict = reported()
+    witnessEdge = firstEdge()
+    witnessEarlierEdge = firstEarlierEdge(firstEdge())
+    errIsBadBeforeSwitch = true
+    pointerIsNil = false
+    pointerIsOutsideNil = false
+    errorIsBad = false
+    onWitness = false
   }
 
   // --- the run --------------------------------------------------------------------
 
-  action early(e: Pre) {
-    requires pc == Ready
-    pc = Early
-    errBad = if pe[e] == EKeep then errBad else pe[e] == EBad
-    follow = rep and e == we
+  action earlierIf(earlierEdge: EarlierEdge) {
+    requires phase == Ready
+    phase = PastEarlierIf
+    errIsBadBeforeSwitch =
+      if earlierStore[earlierEdge] == NoErrorStore then errIsBadBeforeSwitch
+      else earlierStore[earlierEdge] == ErrorBad
+    onWitness = verdict and earlierEdge == witnessEarlierEdge
   }
 
-  action arm(k: Edge, n: Bool) {
-    requires pc == Early
-    pc = Returned
-    uv = uk[k] == Nil  uOut = uk[k] == Ext and n
-    eb = if ek[k] == EKeep then errBad else ek[k] == EBad
-    follow = follow and k == wk and not n
+  action takeArm(edge: Edge, outsideNil: Bool) {
+    requires phase == PastEarlierIf
+    phase = Returned
+    pointerIsNil = armPointer[edge] == Nil
+    pointerIsOutsideNil = armPointer[edge] == Outside and outsideNil
+    errorIsBad =
+      if armError[edge] == NoErrorStore then errIsBadBeforeSwitch
+      else armError[edge] == ErrorBad
+    onWitness = onWitness and edge == witnessEdge and not outsideNil
   }
 
-  terminal { pc == Returned }
+  terminal { phase == Returned }
 
   // --- what is proved -------------------------------------------------------------
 
-  invariant ReportMeansNilWithBad { (follow and pc == Returned) => (uv and eb) }
-  invariant NilWithBadIsReported { (pc == Returned and uv and eb) => reported() }
+  invariant ReportMeansNilWithBad {
+    (onWitness and phase == Returned) => (pointerIsNil and errorIsBad)
+  }
+  invariant NilWithBadIsReported {
+    (phase == Returned and pointerIsNil and errorIsBad) => reported()
+  }
 
   // --- auxiliary ------------------------------------------------------------------
 
-  invariant VerdictFixed { rep == reported() and wk == firstEdge() and we == firstPre(firstEdge()) }
-  invariant FreshBeforeRun { pc == Ready => (errBad and not uv and not uOut and not eb and not follow) }
-  invariant FollowOnlyWhenReported { follow => rep }
-  invariant WitnessWorks { rep => pairs(wk, we) }
+  invariant VerdictFixed {
+    verdict == reported()
+    and witnessEdge == firstEdge()
+    and witnessEarlierEdge == firstEarlierEdge(firstEdge())
+  }
+  invariant FreshBeforeRun {
+    phase == Ready => (
+      errIsBadBeforeSwitch
+      and not pointerIsNil
+      and not pointerIsOutsideNil
+      and not errorIsBad
+      and not onWitness
+    )
+  }
+  invariant FollowOnlyWhenReported { onWitness => verdict }
+  invariant WitnessWorks { verdict => pairs(witnessEdge, witnessEarlierEdge) }
   invariant EarlyTraced {
-    pc != Ready => (exists e: Pre { errBad == badStore(pe[e]) and (follow => e == we) })
+    phase != Ready => (exists earlierEdge: EarlierEdge {
+      errIsBadBeforeSwitch == storeIsBad(earlierStore[earlierEdge])
+      and (onWitness => earlierEdge == witnessEarlierEdge)
+    })
   }
 
   // --- witnesses ------------------------------------------------------------------
 
-  // if b { u = x } else { err = e }; return u, err: kept apart.
+  // `if b { u = x } else { err = e }; return u, err`: kept apart.
   reachable EdgesKeptApart {
-    pc == Returned and not reported() and uk[0] == Alloc and ek[0] == EKeep
-    and uk[1] == Nil and ek[1] == EGood and pe[0] == EKeep and pe[1] == EKeep
+    phase == Returned
+    and not reported()
+    and armPointer[0] == NonNilLiteral
+    and armError[0] == NoErrorStore
+    and armPointer[1] == Nil
+    and armError[1] == ErrorGood
+    and earlierStore[0] == NoErrorStore
+    and earlierStore[1] == NoErrorStore
   }
-  // The earlier if stores the nil error on one arm, and a non-nil one on the
-  // other: the load has two alternatives on the edge that keeps err.
+  // The earlier if stores the nil error on one arm and a non-nil one on the
+  // other. So the load has two alternatives on the edge that keeps err.
   reachable EarlierStoreReported {
-    pc == Returned and reported() and follow and ek[wk] == EKeep and pe[we] == EBad
-    and pe[1 - we] == EGood
+    phase == Returned
+    and reported()
+    and onWitness
+    and armError[witnessEdge] == NoErrorStore
+    and earlierStore[witnessEarlierEdge] == ErrorBad
+    and earlierStore[1 - witnessEarlierEdge] == ErrorGood
   }
-  // u from outside, nil, with the nil error: not reported. The gap.
-  reachable OutsideNilIsMissed { pc == Returned and not reported() and uOut and eb }
+  // u from outside, nil, with the nil error: not reported. This is the gap.
+  reachable OutsideNilIsMissed {
+    phase == Returned and not reported() and pointerIsOutsideNil and errorIsBad
+  }
   reachable ZeroThroughBoth {
-    pc == Returned and reported() and follow and ek[wk] == EKeep and pe[we] == EKeep
+    phase == Returned
+    and reported()
+    and onWitness
+    and armError[witnessEdge] == NoErrorStore
+    and earlierStore[witnessEarlierEdge] == NoErrorStore
   }
 }
