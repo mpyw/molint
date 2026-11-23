@@ -109,7 +109,7 @@ A range-over-func body is a synthetic function literal (`Synthetic == "range-ove
 
 ### Pairing
 
-`flow.Pair` holds a nil pointer to the error or the bool beside it. Where either value is a φ, each incoming edge is judged on its own, with the other value read along the same edge. That repeats while φs remain, into earlier blocks. A value defined before the φ's block takes the checks on the edge too. Before a φ is taken apart, a nil check at the current sites settles the value for the whole path.
+`flow.Pair` holds a nil pointer to the error or the bool beside it. Where either value is a φ, each incoming edge is judged on its own, with the other value read along the same edge. That repeats while φs remain, into earlier blocks. A value defined before the φ's block takes the checks on the edge too. Before a φ is taken apart, a nil check at the current sites settles the value for the whole path. A check that says not nil stops the path. A value checked to be nil that is not a φ stands for the constant from there on. A φ checked to be nil is still taken apart, with a flag that goes with each edge's value: at the end, the flagged value is nil unless it is an `Alloc` or a `MakeInterface`, which are never nil. Replacing the φ with the constant, as before, paired that nil with the other value along every edge, including an edge where the pointer is `&T{}` and the check cannot succeed. `spec/pairing.fsl` holds the flagged rule: replacing the φ breaks `ReportMeansNilWithBad`.
 
 A bare return that loads both results from followed variables is paired along each path back to the stores, both values read on that path.
 

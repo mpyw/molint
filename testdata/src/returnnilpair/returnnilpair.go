@@ -518,8 +518,8 @@ func PairStoredPhisMissing(b, c bool) (u *T, err error) {
 
 func get2() *T { return &T{} }
 
-// A φ checked to be nil at the return is nil there, whatever its edges
-// bring.
+// A φ checked to be nil at the return is nil there, along each edge that
+// brings a value that can be nil.
 func PairCheckedNilPhi(c bool) (*T, error) {
 	x := get()
 	if c {
@@ -539,4 +539,73 @@ func PairMadeAfterJoin(c bool) (*T, error) {
 		err = errX
 	}
 	return get(), err
+}
+
+// Not reported: u == nil holds only on the edge that brings nil, and there
+// the error is errX. On the edge that brings &T{}, the check cannot succeed.
+func PairCheckedNilAcrossEdges(c bool) (*T, error) {
+	u, err := &T{}, error(nil)
+	if c {
+		u, err = nil, errX
+	}
+	if u == nil {
+		return u, err
+	}
+	return &T{}, errX
+}
+
+// Not reported: the same, with the edges into the loop's header.
+func PairCheckedNilAcrossRounds(xs []int) (*T, error) {
+	u, err := &T{}, error(nil)
+	for range xs {
+		u, err = nil, errX
+	}
+	if u == nil {
+		return u, err
+	}
+	return &T{}, errX
+}
+
+// The same, with an edge that brings a call's result: the check makes it
+// nil there, beside the nil error.
+func PairCheckedNilCallEdge(c bool) (*T, error) {
+	u, err := get(), error(nil)
+	if c {
+		u, err = nil, errX
+	}
+	if u == nil {
+		return u, err // want `^PairCheckedNilCallEdge returns a nil \*T with a nil error; return an error, or mo\.Option\[\*T\] \[return-nil\]$`
+	}
+	return &T{}, errX
+}
+
+type errT struct{}
+
+func (errT) Error() string { return "t" }
+
+// Not reported: err == nil holds only on the edge that brings nil, and there
+// the pointer is &T{}. An error made from a value of a concrete type is
+// never nil.
+func PairCheckedErrAcrossEdges(c bool) (*T, error) {
+	u, err := (*T)(nil), error(errT{})
+	if c {
+		u, err = &T{}, nil
+	}
+	if err == nil {
+		return u, err
+	}
+	return &T{}, errX
+}
+
+// The same with errX, a variable that may hold nil for all the rule knows:
+// the check makes it nil on its edge, beside the nil pointer.
+func PairCheckedErrVarAcrossEdges(c bool) (*T, error) {
+	u, err := (*T)(nil), errX
+	if c {
+		u, err = &T{}, nil
+	}
+	if err == nil {
+		return u, err // want `^PairCheckedErrVarAcrossEdges returns a nil \*T with a nil error; return an error, or mo\.Option\[\*T\] \[return-nil\]$`
+	}
+	return &T{}, errX
 }

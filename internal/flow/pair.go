@@ -16,41 +16,41 @@ import (
 // while φs remain. A variable that SSA does not lift is followed through the
 // stores that reach it, both variables along one path.
 func Pair(pt, gt *Tracer, p, g ssa.Value, at Site) bool {
-	return pair(pt, gt, p, []Site{at}, g, []Site{at}, make(map[[2]ssa.Value]bool))
+	return pair(pt, gt, pairAlt{v: p, sites: []Site{at}}, pairAlt{v: g, sites: []Site{at}}, make(map[pairKey]bool))
 }
 
-func pair(pt, gt *Tracer, p ssa.Value, ps []Site, g ssa.Value, gs []Site, seen map[[2]ssa.Value]bool) bool {
+// pairKey is a pair already judged, with what the checks on the way said.
+type pairKey struct {
+	p, g       ssa.Value
+	pNil, gNil bool
+}
+
+func pair(pt, gt *Tracer, p, g pairAlt, seen map[pairKey]bool) bool {
 	// A check on the way settles a value for the whole path, before its φ
-	// is taken apart and the check is left behind. A value checked to be
-	// nil stands for the constant from here on.
-	pNil, pNonNil := pt.checked(p, ps...)
-	gNil, gNonNil := gt.checked(g, gs...)
+	// is taken apart and the check is left behind.
+	var pNonNil, gNonNil bool
+	p, pNonNil = pairSettle(pt, p)
+	g, gNonNil = pairSettle(gt, g)
 	if pNonNil || gNonNil {
 		return false
 	}
-	if pNil {
-		p = ssa.NewConst(nil, p.Type())
-	}
-	if gNil {
-		g = ssa.NewConst(nil, g.Type())
-	}
 	var blk *ssa.BasicBlock
-	if phi, ok := g.(*ssa.Phi); ok {
+	if phi, ok := g.v.(*ssa.Phi); ok {
 		blk = phi.Block()
-	} else if phi, ok := p.(*ssa.Phi); ok {
+	} else if phi, ok := p.v.(*ssa.Phi); ok {
 		blk = phi.Block()
 	}
 	if blk != nil {
-		key := [2]ssa.Value{p, g}
+		key := pairKey{p.v, g.v, p.checkedNil, g.checkedNil}
 		if seen[key] {
 			return false
 		}
 		seen[key] = true
 		for k, pred := range blk.Preds {
 			e := siteEdge(pred, blk)
-			for _, pa := range pairStep(pt, p, ps, blk, k, e) {
-				for _, ga := range pairStep(gt, g, gs, blk, k, e) {
-					if pair(pt, gt, pa.v, pa.sites, ga.v, ga.sites, seen) {
+			for _, pa := range pairStep(pt, p, blk, k, e) {
+				for _, ga := range pairStep(gt, g, blk, k, e) {
+					if pair(pt, gt, pa, ga, seen) {
 						return true
 					}
 				}
@@ -58,41 +58,75 @@ func pair(pt, gt *Tracer, p ssa.Value, ps []Site, g ssa.Value, gs []Site, seen m
 		}
 		return false
 	}
-	if pa, pl := pairFollowedLoad(pt, p); pa != nil {
-		if ga, gl := pairFollowedLoad(gt, g); ga != nil {
-			return pairStores(pt, gt, pa, pl, ga, gl, seen)
+	if pa, pl := pairFollowedLoad(pt, p.v); pa != nil {
+		if ga, gl := pairFollowedLoad(gt, g.v); ga != nil {
+			return pairStores(pt, gt, pa, pl, p.checkedNil, ga, gl, g.checkedNil, seen)
 		}
 	}
-	return pt.Is(p, ps...) && gt.Is(g, gs...)
+	return pairBad(pt, p) && pairBad(gt, g)
 }
 
 // pairAlt is one value a pair may hold along an edge, with where it is
-// judged.
+// judged. checkedNil records that a φ it was read from was checked to be nil
+// on the way.
 type pairAlt struct {
-	v     ssa.Value
-	sites []Site
+	v          ssa.Value
+	sites      []Site
+	checkedNil bool
 }
 
-// pairStep reads v along edge k into blk. A φ of blk gives its edge. A load
+// pairSettle reads the checks at a's sites. A value checked to be nil that is
+// not a φ stands for the constant from here on. A φ checked to be nil is
+// still taken apart, so that an edge whose value cannot be nil stays non-nil:
+// the check cannot succeed along it.
+func pairSettle(t *Tracer, a pairAlt) (pairAlt, bool) {
+	isNil, nonNil := t.checked(a.v, a.sites...)
+	if isNil {
+		if _, ok := a.v.(*ssa.Phi); ok {
+			a.checkedNil = true
+		} else {
+			a.v = ssa.NewConst(nil, a.v.Type())
+		}
+	}
+	return a, nonNil
+}
+
+// pairBad reports whether a is bad for t, where neither value of the pair is
+// a φ any more. A value read from a φ checked to be nil is nil when it can be.
+func pairBad(t *Tracer, a pairAlt) bool {
+	return t.Is(a.v, a.sites...) || a.checkedNil && pairMayBeNil(a.v)
+}
+
+// pairMayBeNil reports whether v may be nil. An allocation, as in &T{}, and a
+// conversion of a non-interface value to an interface never are.
+func pairMayBeNil(v ssa.Value) bool {
+	switch v.(type) {
+	case *ssa.Alloc, *ssa.MakeInterface:
+		return false
+	}
+	return true
+}
+
+// pairStep reads a along edge k into blk. A φ of blk gives its edge. A load
 // in blk of a followed variable, with no store before it in blk, gives what
 // reaches the end of that predecessor, one alternative per store. Any other
 // value is the same on the edge: when it is defined before blk, the checks
 // on the edge apply to it too.
-func pairStep(t *Tracer, v ssa.Value, sites []Site, blk *ssa.BasicBlock, k int, e Site) []pairAlt {
-	if phi, ok := v.(*ssa.Phi); ok && phi.Block() == blk {
-		return []pairAlt{{phi.Edges[k], []Site{e}}}
+func pairStep(t *Tracer, a pairAlt, blk *ssa.BasicBlock, k int, e Site) []pairAlt {
+	if phi, ok := a.v.(*ssa.Phi); ok && phi.Block() == blk {
+		return []pairAlt{{phi.Edges[k], []Site{e}, a.checkedNil}}
 	}
-	if a, load := pairFollowedLoad(t, v); a != nil && load.Block() == blk && pairLoadsEntry(a, load) {
+	if al, load := pairFollowedLoad(t, a.v); al != nil && load.Block() == blk && pairLoadsEntry(al, load) {
 		var alts []pairAlt
-		for _, d := range storesBefore(a, blk.Preds[k], len(blk.Preds[k].Instrs)) {
-			alts = append(alts, pairAlt{d.value, []Site{SiteAt(d.block)}})
+		for _, d := range storesBefore(al, blk.Preds[k], len(blk.Preds[k].Instrs)) {
+			alts = append(alts, pairAlt{d.value, []Site{SiteAt(d.block)}, a.checkedNil})
 		}
 		return alts
 	}
-	if pairDefinedBefore(v, blk) {
-		return []pairAlt{{v, append(append([]Site(nil), sites...), e)}}
+	if pairDefinedBefore(a.v, blk) {
+		a.sites = append(append([]Site(nil), a.sites...), e)
 	}
-	return []pairAlt{{v, sites}}
+	return []pairAlt{a}
 }
 
 // pairLoadsEntry reports whether load reads what a holds on entry to its
@@ -128,7 +162,7 @@ func pairFollowedLoad(t *Tracer, v ssa.Value) (*ssa.Alloc, *ssa.UnOp) {
 // pairStores walks back from the loads along each path, to the last store
 // into each variable on that path, and pairs the two stored values, which
 // may be φs themselves.
-func pairStores(pt, gt *Tracer, pa *ssa.Alloc, pl *ssa.UnOp, ga *ssa.Alloc, gl *ssa.UnOp, pairSeen map[[2]ssa.Value]bool) bool {
+func pairStores(pt, gt *Tracer, pa *ssa.Alloc, pl *ssa.UnOp, pNil bool, ga *ssa.Alloc, gl *ssa.UnOp, gNil bool, pairSeen map[pairKey]bool) bool {
 	type state struct {
 		b      *ssa.BasicBlock
 		pd, gd *storeDef
@@ -155,7 +189,7 @@ func pairStores(pt, gt *Tracer, pa *ssa.Alloc, pl *ssa.UnOp, ga *ssa.Alloc, gl *
 			}
 		}
 		if pd != nil && gd != nil {
-			return pair(pt, gt, pd.value, []Site{SiteAt(pd.block)}, gd.value, []Site{SiteAt(gd.block)}, pairSeen)
+			return pair(pt, gt, pairAlt{pd.value, []Site{SiteAt(pd.block)}, pNil}, pairAlt{gd.value, []Site{SiteAt(gd.block)}, gNil}, pairSeen)
 		}
 		for _, p := range b.Preds {
 			s := state{p, pd, gd}

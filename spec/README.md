@@ -44,6 +44,7 @@ The specs were checked by editing the rule by hand and re-running. Each edit bel
 | `pairing.fsl` | Values from the loop judged whole (no recursion) | `ReportMeansNilWithBad` |
 | | `u != nil` on an edge ignored | `ReportMeansNilWithBad` |
 | | `u == nil` on a φ-node dropped | `NilWithBadIsReported` |
+| | `u == nil` making u nil on every path, even where it is `&T{}` | `ReportMeansNilWithBad` |
 | | The first store of the loop kept, not the last | `ReportMeansNilWithBad` |
 | | The loop not followed, or followed one round only | `NilWithBadIsReported` |
 | | A value from outside counted as nil or Bad | `ReportMeansNilWithBad` |

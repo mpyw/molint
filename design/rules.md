@@ -69,6 +69,18 @@ if b {
 return u, err
 ```
 
+A nil check on a φ settles it for the whole path, before the φ is taken apart. `u != nil` on the way stops the path. `u == nil` makes the φ nil along each edge that brings a value that can be nil. An edge that brings `&T{}`, or an error made from a value of a concrete type, cannot pass the check, so it gives no pair. So this is not reported:
+
+```go
+u, err := &T{}, error(nil)
+if c {
+	u, err = nil, errX
+}
+if u == nil {
+	return u, err
+}
+```
+
 A bare return may load both results from variables SSA does not lift, as in a function with a `defer`. It is judged the same way. Each path back to the stores is judged on its own, with both results read on that path.
 
 Some returns store their results into local variables, then load them. These are a function with a `defer`, a function whose named results a function literal captures, and a `return` inside the body of a range-over-func loop. A `return` statement with operands is judged on the values it stores, whatever captures the variables. So `return nil` is reported even when a deferred function replaces the nil later. The return says nil, and that is what the rule reads. A bare `return` is judged on the stores reaching it, followed as [Nil values](#nil-values) says. A `return` inside a range-over-func body is judged as a return of the enclosing function, not of the synthetic function literal.
