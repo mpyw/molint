@@ -68,15 +68,27 @@ spec PairingBareReturn {
   }
 
   def pickPointerStore(bit: ChoiceBit) =
-    if choice[bit] then (if choice[bit + 1] then NoPointerStore else PointerNil)
-    else (if choice[bit + 1] then PointerNonNil else PointerOutside)
+    if choice[bit] then
+      if choice[bit + 1] then NoPointerStore
+      else PointerNil
+    else
+      if choice[bit + 1] then PointerNonNil
+      else PointerOutside
   def pickErrorStore(bit: ChoiceBit) =
-    if choice[bit] then (if choice[bit + 1] then NoErrorStore else ErrorBad)
-    else (if choice[bit + 1] then ErrorGood else ErrorOutside)
+    if choice[bit] then
+      if choice[bit + 1] then NoErrorStore
+      else ErrorBad
+    else
+      if choice[bit + 1] then ErrorGood
+      else ErrorOutside
   def pickEarlierPointer(bit: ChoiceBit) =
-    if choice[bit] then PointerNil else if choice[bit + 1] then PointerNonNil else PointerOutside
+    if choice[bit] then PointerNil
+    else if choice[bit + 1] then PointerNonNil
+    else PointerOutside
   def pickEarlierError(bit: ChoiceBit) =
-    if choice[bit] then ErrorBad else if choice[bit + 1] then ErrorGood else ErrorOutside
+    if choice[bit] then ErrorBad
+    else if choice[bit + 1] then ErrorGood
+    else ErrorOutside
   def pickAfterPointer(bit: ChoiceBit) =
     if choice[bit] then pickPointerStore(bit + 1) else PointerFromX
   def pickAfterError(bit: ChoiceBit) =
@@ -140,7 +152,9 @@ spec PairingBareReturn {
     else if exists later: ArmOrNone { errorBadOnArms(1, later) } then 1
     else 2
   def laterArmOfPath(first: ArmOrNone) =
-    if errorBadOnArms(first, 0) then 0 else if errorBadOnArms(first, 1) then 1 else 2
+    if errorBadOnArms(first, 0) then 0
+    else if errorBadOnArms(first, 1) then 1
+    else 2
   def earlierEdgeOfPath(first: ArmOrNone, later: ArmOrNone) =
     if errorBadOnPath(first, later, 0) then 0 else 1
   def pathLength(first: ArmOrNone, later: ArmOrNone) =
@@ -221,9 +235,10 @@ spec PairingBareReturn {
     errorIsBad = recordBad(armError[arm], errorIsBad)
     pointerArm = if armPointer[arm] != NoPointerStore then arm else pointerArm
     errorArm = if armError[arm] != NoErrorStore then arm else errorArm
-    pointerStoredLater = if armPointer[arm] != NoPointerStore and armError[arm] == NoErrorStore then true
-                         else if armError[arm] != NoErrorStore then false
-                         else pointerStoredLater
+    pointerStoredLater =
+      if armPointer[arm] != NoPointerStore and armError[arm] == NoErrorStore then true
+      else if armError[arm] != NoErrorStore then false
+      else pointerStoredLater
     lastArm = arm
     rounds = min(rounds + 1, 2)
     onWitness = onWitness
@@ -243,10 +258,12 @@ spec PairingBareReturn {
   action bareReturn(outsideNil: Bool) {
     requires phase == LeftLoop
     phase = Returned
-    pointerIsNil = if afterPointer == PointerFromX then xIsNil
-                   else recordNil(afterPointer, pointerIsNil)
-    pointerIsOutsideNil = if afterPointer == PointerFromX then xIsOutsideNil
-                          else recordOutsideNil(afterPointer, outsideNil, pointerIsOutsideNil)
+    pointerIsNil =
+      if afterPointer == PointerFromX then xIsNil
+      else recordNil(afterPointer, pointerIsNil)
+    pointerIsOutsideNil =
+      if afterPointer == PointerFromX then xIsOutsideNil
+      else recordOutsideNil(afterPointer, outsideNil, pointerIsOutsideNil)
     errorIsBad = if afterError == ErrorFromE then eIsBad else recordBad(afterError, errorIsBad)
     onWitness = onWitness and not outsideNil
   }

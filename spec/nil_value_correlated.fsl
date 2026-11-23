@@ -50,7 +50,9 @@ spec NilValueCorrelated {
   }
 
   def pickOperand(bit: ChoiceBit) =
-    if choice[bit] then Nil else if choice[bit + 1] then NonNilLiteral else Outside
+    if choice[bit] then Nil
+    else if choice[bit + 1] then NonNilLiteral
+    else Outside
 
   init {
     phase = Ready
@@ -81,8 +83,9 @@ spec NilValueCorrelated {
     requires phase == Ready
     phase = Joined
     firstCondition = condition
-    pValue = if condition then operandValue(thenOperand, outsideIsNil)
-             else operandValue(entryOperand, outsideIsNil)
+    pValue =
+      if condition then operandValue(thenOperand, outsideIsNil)
+      else operandValue(entryOperand, outsideIsNil)
     onWitness = verdict and condition == witnessCondition and not outsideIsNil
   }
 

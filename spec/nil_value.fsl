@@ -129,13 +129,22 @@ spec NilValue {
 
   // An entry operand: nil, &T{} or f().
   def pickEntryOperand(bit: ChoiceBit) =
-    if choice[bit] then Nil else if choice[bit + 1] then NonNilLiteral else Outside
+    if choice[bit] then Nil
+    else if choice[bit + 1] then NonNilLiteral
+    else Outside
   // Any operand.
   def pickOperand(bit: ChoiceBit) =
-    if choice[bit] then (if choice[bit + 1] then Nil else NonNilLiteral)
-    else if choice[bit + 1] then (if choice[bit + 2] then Outside else PhiA) else PhiB
+    if choice[bit] then
+      if choice[bit + 1] then Nil
+      else NonNilLiteral
+    else if choice[bit + 1] then
+      if choice[bit + 2] then Outside
+      else PhiA
+    else PhiB
   def pickCheck(bit: ChoiceBit) =
-    if choice[bit] then NoCheck else if choice[bit + 1] then IsNil else NotNil
+    if choice[bit] then NoCheck
+    else if choice[bit + 1] then IsNil
+    else NotNil
 
   // init chooses the program from free choice bits. So every program is a
   // start, and nothing changes it afterwards.
@@ -259,11 +268,15 @@ spec NilValue {
   def operandValue(operand: Operand, outsideIsNil: Bool, valueOfA: Value, valueOfB: Value) =
     if operand == Nil then NilConstant
     else if operand == NonNilLiteral then NonNil
-    else if operand == Outside then (if outsideIsNil then NilOutside else NonNil)
+    else if operand == Outside then
+      if outsideIsNil then NilOutside
+      else NonNil
     else if operand == PhiA then valueOfA
     else valueOfB
   def passesCheck(check: Check, value: Value) =
-    if check == IsNil then value != NonNil else if check == NotNil then value == NonNil else true
+    if check == IsNil then value != NonNil
+    else if check == NotNil then value == NonNil
+    else true
   // A nil from outside that passes x == nil is recorded as checked.
   def afterCheck(check: Check, value: Value) =
     if check == IsNil and value == NilOutside then NilChecked else value
@@ -322,7 +335,10 @@ spec NilValue {
     passesCheck(joinCheck[edge], forwardJoinValue(edge, outsideNil, roundCount))
     and reportableNil(afterCheck(joinCheck[edge], forwardJoinValue(edge, outsideNil, roundCount)))
 
-  def chooseWitnessEdge() = if edgeBringsNil(0) then 0 else if edgeBringsNil(1) then 1 else 2
+  def chooseWitnessEdge() =
+    if edgeBringsNil(0) then 0
+    else if edgeBringsNil(1) then 1
+    else 2
   def chooseWitnessOutsideNil() =
     not (exists roundCount: RoundCount {
       roundCount <= 3 and witnessWorksAt(chooseWitnessEdge(), false, roundCount)

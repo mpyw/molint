@@ -114,15 +114,28 @@ spec ResultZero {
   }
 
   def pickEarlierOperand(bit: ChoiceBit) =
-    if choice[bit] then Zero else if choice[bit + 1] then Built else Outside
+    if choice[bit] then Zero
+    else if choice[bit + 1] then Built
+    else Outside
   def pickOperand(bit: ChoiceBit) =
-    if choice[bit] then (if choice[bit + 1] then KeepsR else Zero)
-    else (if choice[bit + 1] then Built else Outside)
+    if choice[bit] then
+      if choice[bit + 1] then KeepsR
+      else Zero
+    else
+      if choice[bit + 1] then Built
+      else Outside
   def pickComparison(bit: ChoiceBit) =
-    if choice[bit] then NoComparison else if choice[bit + 1] then EqZero else NeZero
+    if choice[bit] then NoComparison
+    else if choice[bit + 1] then EqZero
+    else NeZero
   def pickInstruction(bit: ChoiceBit) =
-    if choice[bit] then (if choice[bit + 1] then Return else (if choice[bit + 2] then Argument else ToInterface))
-    else if choice[bit + 1] then (if choice[bit + 2] then FieldStore else MethodCall)
+    if choice[bit] then
+      if choice[bit + 1] then Return
+      else if choice[bit + 2] then Argument
+      else ToInterface
+    else if choice[bit + 1] then
+      if choice[bit + 2] then FieldStore
+      else MethodCall
     else Compare
 
   // --- the rule -------------------------------------------------------------------
@@ -189,8 +202,14 @@ spec ResultZero {
       witnessWorksAt(edge, earlierEdge, false) or witnessWorksAt(edge, earlierEdge, true)
     }
   def chooseWitnessEdge() =
-    if overwrite == KeepsR then (if edgeBringsZero(0) then 0 else if edgeBringsZero(1) then 1 else 2)
-    else (if witnessWorksOn(0) then 0 else if witnessWorksOn(1) then 1 else 2)
+    if overwrite == KeepsR then
+      if edgeBringsZero(0) then 0
+      else if edgeBringsZero(1) then 1
+      else 2
+    else
+      if witnessWorksOn(0) then 0
+      else if witnessWorksOn(1) then 1
+      else 2
   def chooseWitnessOutsideZero(edge: Edge) =
     not (witnessWorksAt(edge, 0, false) or witnessWorksAt(edge, 1, false))
   def chooseWitnessEarlierEdge(edge: Edge, outsideZero: Bool) =

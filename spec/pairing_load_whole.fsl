@@ -45,10 +45,16 @@ spec PairingLoadWhole {
   }
 
   def pickPointer(bit: ChoiceBit) =
-    if choice[bit] then Nil else if choice[bit + 1] then NonNilLiteral else Outside
+    if choice[bit] then Nil
+    else if choice[bit + 1] then NonNilLiteral
+    else Outside
   def pickErrorStore(bit: ChoiceBit) =
-    if choice[bit] then (if choice[bit + 1] then NoErrorStore else ErrorBad)
-    else (if choice[bit + 1] then ErrorGood else ErrorOutside)
+    if choice[bit] then
+      if choice[bit + 1] then NoErrorStore
+      else ErrorBad
+    else
+      if choice[bit + 1] then ErrorGood
+      else ErrorOutside
 
   // --- the rule -------------------------------------------------------------------
 
@@ -99,8 +105,9 @@ spec PairingLoadWhole {
     requires phase == Ready
     requires not provedReported()
     phase = PastEarlierIf
-    errIsBadBeforeSwitch = if earlierStore[earlierEdge] == NoErrorStore then errIsBadBeforeSwitch
-                           else earlierStore[earlierEdge] == ErrorBad
+    errIsBadBeforeSwitch =
+      if earlierStore[earlierEdge] == NoErrorStore then errIsBadBeforeSwitch
+      else earlierStore[earlierEdge] == ErrorBad
     onWitness = verdict and earlierEdge == witnessEarlierEdge
   }
 
@@ -109,8 +116,9 @@ spec PairingLoadWhole {
     phase = Returned
     pointerIsNil = armPointer[edge] == Nil
     pointerIsOutsideNil = armPointer[edge] == Outside and outsideNil
-    errorIsBad = if armError[edge] == NoErrorStore then errIsBadBeforeSwitch
-                 else armError[edge] == ErrorBad
+    errorIsBad =
+      if armError[edge] == NoErrorStore then errIsBadBeforeSwitch
+      else armError[edge] == ErrorBad
     onWitness = onWitness and edge == witnessEdge and not outsideNil
   }
 

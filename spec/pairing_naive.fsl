@@ -66,23 +66,45 @@ spec PairingNaive {
   }
 
   def pickEntryPointer(bit: ChoiceBit) =
-    if choice[bit] then Nil else if choice[bit + 1] then NonNilLiteral else Outside
+    if choice[bit] then Nil
+    else if choice[bit + 1] then NonNilLiteral
+    else Outside
   def pickEntrySecond(bit: ChoiceBit) =
-    if choice[bit] then Bad else if choice[bit + 1] then Good else SecondOutside
+    if choice[bit] then Bad
+    else if choice[bit + 1] then Good
+    else SecondOutside
   def pickArmPointer(bit: ChoiceBit) =
-    if choice[bit] then (if choice[bit + 1] then KeepsPointer else Nil)
-    else (if choice[bit + 1] then NonNilLiteral else Outside)
+    if choice[bit] then
+      if choice[bit + 1] then KeepsPointer
+      else Nil
+    else
+      if choice[bit + 1] then NonNilLiteral
+      else Outside
   def pickArmSecond(bit: ChoiceBit) =
-    if choice[bit] then (if choice[bit + 1] then KeepsSecond else Bad)
-    else (if choice[bit + 1] then Good else SecondOutside)
+    if choice[bit] then
+      if choice[bit + 1] then KeepsSecond
+      else Bad
+    else
+      if choice[bit + 1] then Good
+      else SecondOutside
   def pickJoinPointer(bit: ChoiceBit) =
-    if choice[bit] then (if choice[bit + 1] then Nil else NonNilLiteral)
-    else (if choice[bit + 1] then Outside else PointerFromLoop)
+    if choice[bit] then
+      if choice[bit + 1] then Nil
+      else NonNilLiteral
+    else
+      if choice[bit + 1] then Outside
+      else PointerFromLoop
   def pickJoinSecond(bit: ChoiceBit) =
-    if choice[bit] then (if choice[bit + 1] then Bad else Good)
-    else (if choice[bit + 1] then SecondOutside else SecondFromLoop)
+    if choice[bit] then
+      if choice[bit + 1] then Bad
+      else Good
+    else
+      if choice[bit + 1] then SecondOutside
+      else SecondFromLoop
   def pickCheck(bit: ChoiceBit) =
-    if choice[bit] then NoCheck else if choice[bit + 1] then IsNil else NotNil
+    if choice[bit] then NoCheck
+    else if choice[bit + 1] then IsNil
+    else NotNil
 
   // --- the rule -------------------------------------------------------------------
 
@@ -129,7 +151,9 @@ spec PairingNaive {
 
   // The witness: the first edge and path that the rule found.
   def firstEdge() =
-    if secondBadOnSomePath(0) then 0 else if secondBadOnSomePath(1) then 1 else 2
+    if secondBadOnSomePath(0) then 0
+    else if secondBadOnSomePath(1) then 1
+    else 2
   // The witness runs the edge and the path that make the error Bad.
   def secondBadOnPath(edge: Edge, first: ArmOrNone, later: ArmOrNone) =
     isPath(first, later) and secondOnEdge(edge, first, later) == Bad
@@ -199,15 +223,21 @@ spec PairingNaive {
   def pointerValue(operand: PointerOperand, outsideIsNil: Bool, old: Value) =
     if operand == Nil then NilConstant
     else if operand == NonNilLiteral then NonNil
-    else if operand == Outside then (if outsideIsNil then NilOutside else NonNil)
+    else if operand == Outside then
+      if outsideIsNil then NilOutside
+      else NonNil
     else old
   def secondValue(operand: SecondOperand, outsideIsBad: Bool, old: SecondValue) =
     if operand == Bad then BadConstant
     else if operand == Good then GoodValue
-    else if operand == SecondOutside then (if outsideIsBad then BadOutside else GoodValue)
+    else if operand == SecondOutside then
+      if outsideIsBad then BadOutside
+      else GoodValue
     else old
   def passesCheck(check: Check, value: Value) =
-    if check == IsNil then value != NonNil else if check == NotNil then value == NonNil else true
+    if check == IsNil then value != NonNil
+    else if check == NotNil then value == NonNil
+    else true
   def afterCheck(check: Check, value: Value) =
     if check == IsNil and value == NilOutside then NilChecked else value
   def reportableNil(value: Value) = value == NilConstant or value == NilChecked
@@ -228,9 +258,10 @@ spec PairingNaive {
     loopSecond = secondValue(armSecond[arm], outsideBad, loopSecond)
     pointerArm = if armPointer[arm] != KeepsPointer then arm else pointerArm
     secondArm = if armSecond[arm] != KeepsSecond then arm else secondArm
-    pointerStoredLater = if armPointer[arm] != KeepsPointer and armSecond[arm] == KeepsSecond then true
-                         else if armSecond[arm] != KeepsSecond then false
-                         else pointerStoredLater
+    pointerStoredLater =
+      if armPointer[arm] != KeepsPointer and armSecond[arm] == KeepsSecond then true
+      else if armSecond[arm] != KeepsSecond then false
+      else pointerStoredLater
     lastArm = arm
     rounds = min(rounds + 1, 2)
     onWitness = onWitness

@@ -43,8 +43,14 @@ spec ReturnStoreDeferred {
 
   init {
     phase = Ready
-    returnOperand = if choice[0] then Nil else if choice[1] then NonNilLiteral else Outside
-    deferredEffect = if choice[2] then Keeps else if choice[3] then SetsNonNil else SetsOutside
+    returnOperand =
+      if choice[0] then Nil
+      else if choice[1] then NonNilLiteral
+      else Outside
+    deferredEffect =
+      if choice[2] then Keeps
+      else if choice[3] then SetsNonNil
+      else SetsOutside
     verdict = false
     pValue = NonNil
     returnedValue = NonNil
@@ -63,10 +69,11 @@ spec ReturnStoreDeferred {
   action store(outsideNil: Bool) {
     requires phase == Judged
     phase = Stored
-    pValue = if returnOperand == Nil then NilConstant
-             else if returnOperand == NonNilLiteral then NonNil
-             else if outsideNil then NilOutside
-             else NonNil
+    pValue =
+      if returnOperand == Nil then NilConstant
+      else if returnOperand == NonNilLiteral then NonNil
+      else if outsideNil then NilOutside
+      else NonNil
     onWitness = verdict and not outsideNil
   }
 
@@ -74,10 +81,11 @@ spec ReturnStoreDeferred {
   action runDeferredAndLoad(outsideNil: Bool) {
     requires phase == Stored
     phase = Returned
-    returnedValue = if deferredEffect == Keeps then pValue
-                    else if deferredEffect == SetsNonNil then NonNil
-                    else if outsideNil then NilOutside
-                    else NonNil
+    returnedValue =
+      if deferredEffect == Keeps then pValue
+      else if deferredEffect == SetsNonNil then NonNil
+      else if outsideNil then NilOutside
+      else NonNil
     onWitness = onWitness and not outsideNil
   }
 
