@@ -57,7 +57,7 @@ The repository is checked by [declscope](https://github.com/mpyw/declscope) with
 | --- | --- |
 | No `//declscope:core` | A core file hides its names from the naming rule |
 | A rule's entry point is `//declscope:shared`, with the file that calls it | `run.go` and `calls.go` call into each rule's file |
-| `flow` is split by concept: `site.go`, `tracer.go`, `store.go`, `return.go`, `range.go`, `pair.go` | Each name carries its file's concept, as `SiteAt`, `NilTracer`, `storesReaching`, `RangeReturns`. One file would have made every name carry `flow` |
+| `flow` is split by concept: `site.go`, `tracer.go`, `store.go`, `escape.go`, `return.go`, `range.go`, `pair.go` | Each name carries its file's concept, as `SiteAt`, `NilTracer`, `storesReaching`, `EscapedStoresRead`, `RangeReturns`. One file would have made every name carry `flow` |
 | `nilcheck.Unknown`, `typeutil.TrailingNone` and `typeutil.Option` stay exported with no ignore | No other package names them, but each enum is incomplete without them. Since declscope 0.18.0, `shrink` judges a `const` block of one type as one set, so the other values keep them exported |
 
 ## Working with nilaway
@@ -100,6 +100,22 @@ The sample is small. Run both over a real application before relying on these ro
 A nil check that dominates a site settles a value there. `nilcheck` reads a comparison with any zero constant, so a comparison of a struct with its zero value counts too. That is how `result-zero` stops at `if r == (mo.Result[int]{})`.
 
 A function literal that captures a variable and only loads it keeps the variable followed. One that stores into it, or any other use of its address, stops the following.
+
+### Stores after an escape
+
+A variable whose address escapes is not followed. `result-zero` judges its stores instead ([#37](https://github.com/mpyw/molint/issues/37)). `flow.EscapedStoresRead` lists the stores that a load of the variable reads with nothing on the way that may run other code. It walks back from each load with `storesUntil`, the walk `storesReaching` uses, plus a stop. A path that meets the stop before a store brings nothing. Then it keeps the stores that some escape can run before: an escape earlier in the store's block, or in a block that reaches it. The escapes are the uses that `tracerFollows` rejects one by one.
+
+The stop is an allowlist. `escapeInterrupts` names the instructions that cannot run other code. Every other instruction stops the walk, so an instruction go/ssa adds later is taken as one that may run code. A store stops it when its address has `r`'s type and may be `&r`: a new variable, a global, a field and an element cannot be.
+
+A `return r` of a named result in a function with a `defer` loads r, stores it back into r, runs the deferred calls, and loads r again. The first load only feeds that store, so it is skipped as a read. Without this, `defer func() { r = mo.Ok(1) }(); r = mo.Result[int]{}; return r` was reported, although the function returns `mo.Ok(1)`.
+
+The `Escaped*`, `ZeroThenEscape` and `ZeroThenHold` fixtures in `testdata/src/resultzero` pin each case below, and `spec/result_zero_escape.fsl` models the rule.
+
+| Design | Why not |
+| --- | --- |
+| Report every zero stored into an escaped variable | `r := mo.Result[int]{}; json.Unmarshal(data, &r)` is reported, and so is a loop that resets r before each decode. Both are ordinary code. The store is a reset, not a use |
+| Stop only at a call that takes `&r` | `holder.p = &r; r = mo.Result[int]{}; fill(); return r` is reported, although `fill` may write r through `holder.p`. So is a function whose deferred literal writes r, since the defer takes no `&r` at the return. Where the address went is not known, so any code that may run must stop the path |
+| Follow the escaped variable's loads, as for a followed one | Any code that holds the address may store into it. `spec/local_store_escape.fsl` is the counterexample |
 
 ### Returns
 

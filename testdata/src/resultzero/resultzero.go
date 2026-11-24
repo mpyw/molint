@@ -3,6 +3,7 @@
 package resultzero
 
 import (
+	"encoding/json"
 	"errors"
 
 	"github.com/samber/mo"
@@ -203,6 +204,227 @@ func AddressLoadedOnly() mo.Result[int] {
 	p := &r
 	return *p // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
 }
+
+// ===== Stores after the address escapes =====
+
+// Once &r is out, any code may write r. A zero stored after that is
+// reported when a load of r reads it with nothing on the way that may run
+// other code.
+
+type ptrHolder struct{ p *mo.Result[int] }
+
+var holder ptrHolder
+
+func sink(*mo.Result[int]) {}
+func fill()                {}
+
+func EscapedThenZero() mo.Result[int] {
+	var r mo.Result[int]
+	sink(&r)
+	r = mo.Result[int]{} // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
+	return r
+}
+
+// Arithmetic on the way does not run other code.
+func EscapedThenZeroArithmetic() mo.Result[int] {
+	var r mo.Result[int]
+	sink(&r)
+	r = mo.Result[int]{} // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
+	x := 1
+	_ = x
+	return r
+}
+
+// Neither do a field read of another value, a builtin such as len, nor a
+// branch. The read may be a copy or an argument.
+func EscapedThenZeroBranch(t T, xs []int) {
+	var r mo.Result[int]
+	sink(&r)
+	r = mo.Result[int]{} // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
+	n := len(xs)
+	if t.N > n {
+		n++
+	}
+	c := r
+	consume(c)
+}
+
+// One path that reaches the read with no call is enough.
+func EscapedThenZeroOnePath(c bool) mo.Result[int] {
+	var r mo.Result[int]
+	sink(&r)
+	r = mo.Result[int]{} // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
+	if c {
+		fill()
+	}
+	return r
+}
+
+// The escape on one path before the store is enough.
+func EscapedOnOnePath(c bool) mo.Result[int] {
+	var r mo.Result[int]
+	if c {
+		sink(&r)
+	}
+	r = mo.Result[int]{} // want `^a zero mo\.Result\[int\] is Ok with a zero value; build it with mo\.Ok or mo\.Err \[result-zero\]$`
+	return r
+}
+
+// Not reported: the store initializes r before &r escapes.
+func EscapedInitThenDecode(data []byte) mo.Result[int] {
+	r := mo.Result[int]{}
+	_ = json.Unmarshal(data, &r)
+	return r
+}
+
+// Not reported: the decoder may fill r again in each round.
+func EscapedResetInLoop(ds [][]byte) {
+	var r mo.Result[int]
+	for _, d := range ds {
+		r = mo.Result[int]{}
+		_ = json.Unmarshal(d, &r)
+		consume(r)
+	}
+}
+
+// Not reported: fill does not take &r, but the pointer held in holder lets
+// it write r.
+func EscapedHeldThenCall() mo.Result[int] {
+	var r mo.Result[int]
+	holder.p = &r
+	r = mo.Result[int]{}
+	fill()
+	return r
+}
+
+// Not reported: the store comes before &r escapes, and sink may write r.
+func ZeroThenEscape() mo.Result[int] {
+	var r mo.Result[int]
+	r = mo.Result[int]{}
+	sink(&r)
+	return r
+}
+
+// Not reported: the store comes before &r escapes, even with nothing that
+// runs code on the way to the read.
+func ZeroThenHold() mo.Result[int] {
+	var r mo.Result[int]
+	r = mo.Result[int]{}
+	holder.p = &r
+	return r
+}
+
+// Not reported: close lets a goroutine waiting on ch run, and it may write
+// r.
+func EscapedThenClose(ch chan int) mo.Result[int] {
+	var r mo.Result[int]
+	holder.p = &r
+	r = mo.Result[int]{}
+	close(ch)
+	return r
+}
+
+// Not reported: a deferred literal may write r after the return reads it.
+func EscapedDeferRewrites() (r mo.Result[int]) {
+	defer func() {
+		if r.IsOk() {
+			r = mo.Err[int](errX)
+		}
+	}()
+	r = mo.Result[int]{}
+	return r
+}
+
+// Not reported: the same with a bare return.
+func EscapedDeferRewritesBare() (r mo.Result[int]) {
+	defer func() { r = mo.Err[int](errX) }()
+	r = mo.Result[int]{}
+	return
+}
+
+// Not reported: a go statement on the way may run code that writes r.
+func EscapedThenGo() mo.Result[int] {
+	var r mo.Result[int]
+	sink(&r)
+	r = mo.Result[int]{}
+	go fill()
+	return r
+}
+
+// Not reported: a defer statement on the way, and the deferred calls run
+// before the result is read.
+func EscapedThenDefer() (r mo.Result[int]) {
+	holder.p = &r
+	r = mo.Result[int]{}
+	defer fill()
+	return
+}
+
+// Not reported: a receive on the way lets another goroutine write r first.
+func EscapedThenReceive(ch chan int) mo.Result[int] {
+	var r mo.Result[int]
+	holder.p = &r
+	r = mo.Result[int]{}
+	<-ch
+	return r
+}
+
+// Not reported: a send on the way.
+func EscapedThenSend(ch chan int) mo.Result[int] {
+	var r mo.Result[int]
+	holder.p = &r
+	r = mo.Result[int]{}
+	ch <- 1
+	return r
+}
+
+// Not reported: a select on the way.
+func EscapedThenSelect(ch chan int) mo.Result[int] {
+	var r mo.Result[int]
+	holder.p = &r
+	r = mo.Result[int]{}
+	select {
+	case <-ch:
+	default:
+	}
+	return r
+}
+
+// Not reported: a store through a pointer that may be &r.
+func EscapedThenStoreThrough() mo.Result[int] {
+	var r mo.Result[int]
+	holder.p = &r
+	r = mo.Result[int]{}
+	*holder.p = mo.Ok(1)
+	return r
+}
+
+// Not reported: another store into r kills the zero.
+func EscapedThenOverwrite() mo.Result[int] {
+	var r mo.Result[int]
+	sink(&r)
+	r = mo.Result[int]{}
+	r = mo.Ok(1)
+	return r
+}
+
+// A known miss: a read through another pointer is not a direct read.
+func EscapedReadThroughPointer() mo.Result[int] {
+	var r mo.Result[int]
+	holder.p = &r
+	r = mo.Result[int]{}
+	return *holder.p
+}
+
+// A known miss: a callee that only reads the zero is not followed.
+func EscapedReadByCallee() {
+	var r mo.Result[int]
+	holder.p = &r
+	r = mo.Result[int]{}
+	readHeld()
+}
+
+func readHeld() { consume(*holder.p) }
 
 // ===== new =====
 

@@ -1,0 +1,341 @@
+// result-zero for a variable whose address escapes. See "After the address
+// escapes" in design/rules.md.
+//
+// Once &r is out, any code may write r. So the loads of r are not followed.
+// A zero stored into r after the address escaped is reported instead, when
+// the zero reaches a direct read of r with nothing on the way that may run
+// other code.
+//
+// The program:
+//
+//   var r mo.Result[T]
+//   E                         the escape before the store, or none
+//   r = S                     S is the zero Result or mo.Ok(v)
+//   switch {                  two arms, each one step A0 or A1
+//   case c: A0
+//   default: A1
+//   }
+//   L                         one more step
+//   use(r)                    the direct read
+//
+// E is one of:
+//
+//   NoEscape      nothing takes &r before the store
+//   StoresAddr    holder.p = &r. It runs no code
+//   PassesAddr    sink(&r). It runs code that may keep the pointer
+//
+// A step is one of:
+//
+//   Plain         arithmetic, a field read of another value, a branch
+//   Call          code that may run: a call that does not take &r, go,
+//                 defer, the deferred calls at a return, a channel send or
+//                 receive, a select
+//   Overwrite     r = mo.Ok(v)
+//   StoresAddr    holder.p = &r, after the store
+//   PassesAddr    sink(&r), after the store
+//
+// The rule, reported below, reports the store when the address escaped
+// before it, S is the zero, and some arm has a path to the read where each
+// step is Plain or StoresAddr.
+//
+// The run goes step by step. Whenever code may run and the address is out,
+// that code (the holder) keeps r, or writes mo.Ok(v) or the zero into it.
+// The holder's choice is free, also on the witness run. The run records
+// whether r still holds the value of the store (fromStore), and whether any
+// code ran after the store (interrupted). The rule never reads that record.
+//
+// The claims:
+//
+//   ReportMeansAnUninterruptedRead   when reported, the witness run reads
+//                                    the zero of the store, made after the
+//                                    escape, with no code run on the way,
+//                                    whatever the holder does
+//   UninterruptedReadIsReported      whenever a run reads such a zero, it
+//                                    is reported
+//   InterruptionMeansNoReport        when the witness run passes code that
+//                                    may run, nothing is reported
+//
+// The witness takes the first arm whose path is clean.
+//
+// The negative controls at the end are rules that break a claim. Each is a
+// reachable that states the negation of the claim for that rule:
+//
+//   EveryEscapedStoreIsBroken    report every zero stored into a variable
+//                                whose address escapes, as for
+//                                `r := mo.Result[T]{}; json.Unmarshal(d, &r)`
+//   OnlyAddrCallsKillIsBroken    stop only at a call that takes &r, as for
+//                                `holder.p = &r; r = zero; fill(); return r`
+//   EveryPathCleanIsBroken       report only when every arm is clean
+//
+// ASSUME-1: branches are taken as independent, as the rule defines.
+// ASSUME-2 (representation only): one variable, one store, two arms and one
+//   later step. A loop adds nothing here. A round before the store that
+//   passes &r is the escape E, and a round after it is a later step.
+// ASSUME-3: only a load of r itself is a read. A read through another
+//   pointer, and a callee that only reads the zero, are accepted misses
+//   (design/rules.md, Gaps). They are not modeled.
+// ASSUME-4: the store is the zero constant or built. A zero from outside
+//   is never a zero Result, and result_zero.fsl covers how a stored value
+//   is judged.
+fsl 5
+spec ResultZeroEscape {
+  enum Escape { NoEscape, EscapeStoresAddr, EscapePassesAddr }
+  enum Step { Plain, Call, Overwrite, StoresAddr, PassesAddr }
+  enum Holder { HolderKeeps, HolderBuilds, HolderZeroes }
+  enum Value { Zero, Built }
+  enum Phase { Ready, Escaped, Stored, Armed, Later, Read }
+  type Arm = 0..1
+  type ChoiceBit = 0..11
+
+  state {
+    phase: Phase,
+    choice: Map<ChoiceBit, Bool>,
+    // the program
+    escapeBefore: Escape,
+    storesZero: Bool,
+    armStep: Map<Arm, Step>,
+    laterStep: Step,
+    // the verdict and its witness
+    verdict: Bool,
+    witnessArm: Arm,
+    // the run
+    addressOut: Bool,
+    escapedAtStore: Bool,
+    rValue: Value,
+    fromStore: Bool,
+    interrupted: Bool,
+    takenArm: Arm,
+    readValue: Value
+  }
+
+  def pickEscape(bit: ChoiceBit) =
+    if choice[bit] then NoEscape
+    else if choice[bit + 1] then EscapeStoresAddr
+    else EscapePassesAddr
+  def pickStep(bit: ChoiceBit) =
+    if choice[bit] then
+      if choice[bit + 1] then Plain
+      else Call
+    else if choice[bit + 1] then Overwrite
+    else if choice[bit + 2] then StoresAddr
+    else PassesAddr
+
+  // --- the rule -------------------------------------------------------------------
+
+  def escapedBefore() = escapeBefore != NoEscape
+  def stepClean(step: Step) = step == Plain or step == StoresAddr
+  def pathClean(arm: Arm) = stepClean(armStep[arm]) and stepClean(laterStep)
+  def reported() = escapedBefore() and storesZero and (exists arm: Arm { pathClean(arm) })
+  def chooseWitnessArm() = if pathClean(0) then 0 else 1
+
+  init {
+    phase = Ready
+    escapeBefore = pickEscape(0)
+    storesZero = choice[2]
+    forall arm: Arm { armStep[arm] = pickStep(3 + 3 * arm) }
+    laterStep = pickStep(9)
+    // The verdict and the witness read only the program set above.
+    verdict = reported()
+    witnessArm = chooseWitnessArm()
+    addressOut = false
+    escapedAtStore = false
+    rValue = Built
+    fromStore = false
+    interrupted = false
+    takenArm = 0
+    readValue = Built
+  }
+
+  // --- the run --------------------------------------------------------------------
+
+  def runsCode(step: Step) = step == Call or step == PassesAddr
+  def outAfter(step: Step) = addressOut or step == StoresAddr or step == PassesAddr
+  // Code that runs may write r only once the address is out.
+  def holderWrites(step: Step, holder: Holder) =
+    runsCode(step) and outAfter(step) and holder != HolderKeeps
+  def holderValue(holder: Holder) = if holder == HolderZeroes then Zero else Built
+  def valueAfter(step: Step, holder: Holder) =
+    if step == Overwrite then Built
+    else if holderWrites(step, holder) then holderValue(holder)
+    else rValue
+  def keepsStore(step: Step, holder: Holder) =
+    fromStore and step != Overwrite and not holderWrites(step, holder)
+
+  action escape() {
+    requires phase == Ready
+    phase = Escaped
+    addressOut = escapeBefore != NoEscape
+  }
+
+  action store() {
+    requires phase == Escaped
+    phase = Stored
+    escapedAtStore = addressOut
+    rValue = if storesZero then Zero else Built
+    fromStore = true
+    interrupted = false
+  }
+
+  action arm(arm: Arm, holder: Holder) {
+    requires phase == Stored
+    phase = Armed
+    takenArm = arm
+    rValue = valueAfter(armStep[arm], holder)
+    fromStore = keepsStore(armStep[arm], holder)
+    interrupted = interrupted or runsCode(armStep[arm])
+    addressOut = outAfter(armStep[arm])
+  }
+
+  action later(holder: Holder) {
+    requires phase == Armed
+    phase = Later
+    rValue = valueAfter(laterStep, holder)
+    fromStore = keepsStore(laterStep, holder)
+    interrupted = interrupted or runsCode(laterStep)
+    addressOut = outAfter(laterStep)
+  }
+
+  action read() {
+    requires phase == Later
+    phase = Read
+    readValue = rValue
+  }
+
+  terminal { phase == Read }
+
+  // --- what is proved -------------------------------------------------------------
+
+  // The read gives the zero of a store made after the escape.
+  def readsTheStoredZero() = escapedAtStore and fromStore and readValue == Zero
+
+  invariant ReportMeansAnUninterruptedRead {
+    (phase == Read and verdict and takenArm == witnessArm) =>
+      (readsTheStoredZero() and not interrupted)
+  }
+  invariant UninterruptedReadIsReported {
+    (phase == Read and readsTheStoredZero() and not interrupted) => verdict
+  }
+  invariant InterruptionMeansNoReport {
+    (phase == Read and interrupted and takenArm == witnessArm) => not verdict
+  }
+
+  // --- auxiliary ------------------------------------------------------------------
+
+  invariant VerdictFixed { verdict == reported() and witnessArm == chooseWitnessArm() }
+  invariant FreshBeforeStore {
+    (phase == Ready or phase == Escaped) => (
+      not escapedAtStore
+      and not fromStore
+      and not interrupted
+      and (phase == Escaped => addressOut == escapedBefore())
+    )
+  }
+  invariant StoreTraced {
+    (phase == Stored or phase == Armed or phase == Later or phase == Read) => (
+      escapedAtStore == escapedBefore()
+      and (escapedAtStore => addressOut)
+      and (phase == Stored => (fromStore and not interrupted))
+      and (fromStore => rValue == (if storesZero then Zero else Built))
+    )
+  }
+  invariant StepsTraced {
+    (phase == Armed or phase == Later or phase == Read) => (
+      (fromStore => armStep[takenArm] != Overwrite)
+      and (interrupted == (runsCode(armStep[takenArm])
+                           or (phase != Armed and runsCode(laterStep))))
+      and ((phase != Armed and fromStore) => laterStep != Overwrite)
+      // Only an overwrite, or code that runs, takes the store's value away.
+      and ((not fromStore and not interrupted) =>
+            (armStep[takenArm] == Overwrite or (phase != Armed and laterStep == Overwrite)))
+    )
+  }
+  invariant ReadTraced { phase == Read => readValue == rValue }
+
+  // --- witnesses ------------------------------------------------------------------
+
+  // The example of #37: `sink(&r); r = zero; return r`.
+  reachable ZeroAfterSinkIsRead {
+    phase == Read
+    and verdict
+    and escapeBefore == EscapePassesAddr
+    and laterStep == Plain
+    and readValue == Zero
+  }
+  // `r := zero; json.Unmarshal(d, &r); use(r)`: the decoder writes r.
+  reachable DecoderResetIsNotReported {
+    phase == Read
+    and not verdict
+    and escapeBefore == NoEscape
+    and storesZero
+    and armStep[takenArm] == PassesAddr
+    and readValue == Built
+  }
+  // `holder.p = &r; r = zero; fill(); return r`: fill writes r.
+  reachable HeldPointerIsWritten {
+    phase == Read
+    and not verdict
+    and escapeBefore == EscapeStoresAddr
+    and storesZero
+    and armStep[takenArm] == Call
+    and laterStep == Plain
+    and readValue == Built
+  }
+  // `r = zero; holder.p = &r; return r`: the store comes before the
+  // escape. The zero is read, and that is not reported.
+  reachable StoreBeforeEscapeIsNotReported {
+    phase == Read
+    and not verdict
+    and storesZero
+    and armStep[takenArm] == StoresAddr
+    and laterStep == Plain
+    and readValue == Zero
+  }
+  // One arm calls and the other does not. The clean arm is the witness.
+  reachable OneCleanArmIsEnough {
+    phase == Read
+    and verdict
+    and armStep[0] == Call
+    and takenArm == witnessArm
+    and witnessArm == 1
+  }
+  reachable OverwriteKills {
+    phase == Read
+    and not verdict
+    and escapedBefore()
+    and storesZero
+    and armStep[0] == Overwrite
+    and armStep[1] == Overwrite
+  }
+
+  // --- negative controls ----------------------------------------------------------
+
+  // (a) Every zero stored into a variable whose address escapes anywhere.
+  def reportedEvery() =
+    storesZero
+    and (escapedBefore()
+         or (exists arm: Arm { armStep[arm] == StoresAddr or armStep[arm] == PassesAddr })
+         or laterStep == StoresAddr
+         or laterStep == PassesAddr)
+  reachable EveryEscapedStoreIsBroken {
+    not ((phase == Read and reportedEvery() and takenArm == 0) =>
+          (readsTheStoredZero() and not interrupted))
+  }
+
+  // (b) Only a call that takes &r stops the path.
+  def stepCleanOnlyAddr(step: Step) = step != Overwrite and step != PassesAddr
+  def pathCleanOnlyAddr(arm: Arm) = stepCleanOnlyAddr(armStep[arm]) and stepCleanOnlyAddr(laterStep)
+  def reportedOnlyAddr() =
+    escapedBefore() and storesZero and (exists arm: Arm { pathCleanOnlyAddr(arm) })
+  def witnessArmOnlyAddr() = if pathCleanOnlyAddr(0) then 0 else 1
+  reachable OnlyAddrCallsKillIsBroken {
+    not ((phase == Read and interrupted and takenArm == witnessArmOnlyAddr()) =>
+          not reportedOnlyAddr())
+  }
+
+  // (c) Every arm must be clean.
+  def reportedEveryPath() =
+    escapedBefore() and storesZero and (forall arm: Arm { pathClean(arm) })
+  reachable EveryPathCleanIsBroken {
+    not ((phase == Read and readsTheStoredZero() and not interrupted) => reportedEveryPath())
+  }
+}
