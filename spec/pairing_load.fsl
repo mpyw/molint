@@ -41,13 +41,18 @@
 // Nor is the same with `if cond() { log() }` before the return. The load
 // then sits in a later block than the φ-node.
 //
-// The rule, reported below, needs some edge that brings the nil constant
-// for u. A store that reaches the load on a path through that edge must
-// store Bad. That store is L, when the later if is taken and stores.
-// Otherwise it is the arm's own E. When the arm stores nothing, it is a
-// store that reaches the switch: P0, P1 or the Alloc's zero.
+// The rule, reported below, works as pairStoresOnEdge does. It needs some
+// edge that brings the nil constant for u. It walks back from the load and
+// collects the stores into err that reach it on a path through that edge.
+// L is one, when it stores. A path that skips the later if reaches the
+// switch, and so does a path through an arm of it that stores nothing.
+// There the walk reads what reaches the end of the edge's arm. That is the
+// arm's own E, or P0, P1 and the Alloc's zero when the arm stores nothing.
+// The rule reports when one of the stores it collected stores Bad.
 //
-// The run keeps its own record: whether u and err hold the constants.
+// The run keeps its own record: whether u and err hold the constants. It
+// takes one path. So the claims compare the stores a walk collects with
+// the store one path leaves.
 //
 // The claim:
 //
@@ -111,29 +116,29 @@ spec PairingLoad {
 
   // The Alloc's zero is the nil error.
   def storeIsBad(store: ErrorStore) = store == ErrorBad or store == NoErrorStore
-  // The stores that reach the end of an arm's block, read on the path
-  // through the earlier if's edge.
-  def badReachesArmEnd(edge: Edge, earlierEdge: EarlierEdge) =
+  // Some store that reaches the end of the arm on this edge stores Bad.
+  def badStoreReachesArmEnd(edge: Edge) =
     if armError[edge] != NoErrorStore then armError[edge] == ErrorBad
-    else storeIsBad(earlierStore[earlierEdge])
-  // What err holds at the load: L when the later if is taken and stores.
-  def badAtLoad(edge: Edge, earlierEdge: EarlierEdge, later: Bool) =
-    if later and laterStore != NoErrorStore then laterStore == ErrorBad
-    else badReachesArmEnd(edge, earlierEdge)
-  def pairs(edge: Edge, earlierEdge: EarlierEdge, later: Bool) =
-    (hasLaterIf or not later)
-    and armPointer[edge] == Nil
-    and badAtLoad(edge, earlierEdge, later)
-  def pairsEitherLater(edge: Edge, earlierEdge: EarlierEdge) =
-    exists later: Bool { pairs(edge, earlierEdge, later) }
-  def reported() =
-    exists edge: Edge { exists earlierEdge: EarlierEdge { pairsEitherLater(edge, earlierEdge) } }
+    else exists earlierEdge: EarlierEdge { storeIsBad(earlierStore[earlierEdge]) }
+  // Some store that reaches the load through this edge stores Bad: L, or
+  // a store that reaches the end of the arm.
+  def badStoreReachesLoad(edge: Edge) =
+    (hasLaterIf and laterStore == ErrorBad)
+    or badStoreReachesArmEnd(edge)
+  def pairsOnEdge(edge: Edge) =
+    armPointer[edge] == Nil
+    and badStoreReachesLoad(edge)
+  def reported() = exists edge: Edge { pairsOnEdge(edge) }
+
+  // The witness: the first edge that pairs. It takes the later if when L
+  // stores Bad. Otherwise it takes the earlier if's first edge whose
+  // store is Bad.
   def firstEdge() =
-    if exists earlierEdge: EarlierEdge { pairsEitherLater(0, earlierEdge) } then 0
-    else if exists earlierEdge: EarlierEdge { pairsEitherLater(1, earlierEdge) } then 1
+    if pairsOnEdge(0) then 0
+    else if pairsOnEdge(1) then 1
     else 2
-  def firstEarlierEdge(edge: Edge) = if pairsEitherLater(edge, 0) then 0 else 1
-  def firstLaterTaken(edge: Edge, earlierEdge: EarlierEdge) = not pairs(edge, earlierEdge, false)
+  def firstEarlierEdge() = if storeIsBad(earlierStore[0]) then 0 else 1
+  def laterStoresBad() = hasLaterIf and laterStore == ErrorBad
 
   init {
     phase = Ready
@@ -148,8 +153,8 @@ spec PairingLoad {
     laterStore = pickErrorStore(17)
     verdict = reported()
     witnessEdge = firstEdge()
-    witnessEarlierEdge = firstEarlierEdge(firstEdge())
-    witnessLaterTaken = firstLaterTaken(firstEdge(), firstEarlierEdge(firstEdge()))
+    witnessEarlierEdge = firstEarlierEdge()
+    witnessLaterTaken = laterStoresBad()
     errIsBadBeforeSwitch = true
     pointerIsNil = false
     pointerIsOutsideNil = false
@@ -209,11 +214,24 @@ spec PairingLoad {
 
   // --- auxiliary ------------------------------------------------------------------
 
+  // What err holds at the end of one path, for the lemmas below. The rule
+  // never reads these.
+  def badAtArmEnd(edge: Edge, earlierEdge: EarlierEdge) =
+    if armError[edge] != NoErrorStore then armError[edge] == ErrorBad
+    else storeIsBad(earlierStore[earlierEdge])
+  def badAtLoad(edge: Edge, earlierEdge: EarlierEdge, later: Bool) =
+    if later and laterStore != NoErrorStore then laterStore == ErrorBad
+    else badAtArmEnd(edge, earlierEdge)
+  def pathPairs(edge: Edge, earlierEdge: EarlierEdge, later: Bool) =
+    (hasLaterIf or not later)
+    and armPointer[edge] == Nil
+    and badAtLoad(edge, earlierEdge, later)
+
   invariant VerdictFixed {
     verdict == reported()
     and witnessEdge == firstEdge()
-    and witnessEarlierEdge == firstEarlierEdge(firstEdge())
-    and witnessLaterTaken == firstLaterTaken(firstEdge(), firstEarlierEdge(firstEdge()))
+    and witnessEarlierEdge == firstEarlierEdge()
+    and witnessLaterTaken == laterStoresBad()
   }
   invariant FreshBeforeRun {
     phase == Ready => (
@@ -225,7 +243,7 @@ spec PairingLoad {
     )
   }
   invariant FollowOnlyWhenReported { onWitness => verdict }
-  invariant WitnessWorks { verdict => pairs(witnessEdge, witnessEarlierEdge, witnessLaterTaken) }
+  invariant WitnessWorks { verdict => pathPairs(witnessEdge, witnessEarlierEdge, witnessLaterTaken) }
   invariant EarlyTraced {
     phase != Ready => (
       errIsBadBeforeSwitch == storeIsBad(earlierStore[takenEarlierEdge])
@@ -239,7 +257,7 @@ spec PairingLoad {
       pointerIsNil == (armPointer[takenEdge] == Nil)
       and (pointerIsOutsideNil => armPointer[takenEdge] == Outside)
       and (onWitness => (takenEdge == witnessEdge and not pointerIsOutsideNil))
-      and (phase == PastSwitch => errorIsBad == badReachesArmEnd(takenEdge, takenEarlierEdge))
+      and (phase == PastSwitch => errorIsBad == badAtArmEnd(takenEdge, takenEarlierEdge))
       and (phase == Returned => (
         errorIsBad == badAtLoad(takenEdge, takenEarlierEdge, laterTaken)
         and (hasLaterIf or not laterTaken)
@@ -282,7 +300,7 @@ spec PairingLoad {
     and onWitness
     and witnessLaterTaken
     and laterStore == ErrorBad
-    and not pairs(witnessEdge, witnessEarlierEdge, false)
+    and not pathPairs(witnessEdge, witnessEarlierEdge, false)
   }
   // The earlier if stores the nil error on one arm and a non-nil one on the
   // other. So the load has two alternatives on the edge that keeps err.

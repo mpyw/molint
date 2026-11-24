@@ -12,18 +12,19 @@
 // then edge. No run returns nil with a nil error.
 //
 // The program, the run and the claim are those of pairing_load.fsl, except
-// for reported. The witness takes the edge whose stores make err nil. The
-// run is limited to programs that pairing_load.fsl's rule does not report.
+// for reported and the witness. The witness takes the edge whose stores
+// make err nil. The run is limited to programs that pairing_load.fsl's rule
+// does not report.
 fsl 5
 spec PairingLoadWhole {
   // NonNilLiteral is &T{}, and Outside is f(). NoErrorStore: the arm
   // stores nothing into err.
   enum PointerOperand { Nil, NonNilLiteral, Outside }
   enum ErrorStore { NoErrorStore, ErrorBad, ErrorGood, ErrorOutside }
-  enum Phase { Ready, PastEarlierIf, Returned }
+  enum Phase { Ready, PastEarlierIf, PastSwitch, Returned }
   type Edge = 0..2
   type EarlierEdge = 0..1
-  type ChoiceBit = 0..15
+  type ChoiceBit = 0..18
 
   state {
     phase: Phase,
@@ -32,16 +33,23 @@ spec PairingLoadWhole {
     earlierStore: Map<EarlierEdge, ErrorStore>,
     armPointer: Map<Edge, PointerOperand>,
     armError: Map<Edge, ErrorStore>,
+    hasLaterIf: Bool,
+    laterStore: ErrorStore,
     // the verdict and its witness
     verdict: Bool,
     witnessEdge: Edge,
     witnessEarlierEdge: EarlierEdge,
+    witnessLaterTaken: Bool,
     // the run's own record
     errIsBadBeforeSwitch: Bool,
     pointerIsNil: Bool,
     pointerIsOutsideNil: Bool,
     errorIsBad: Bool,
-    onWitness: Bool
+    onWitness: Bool,
+    // the path the run took
+    takenEarlierEdge: EarlierEdge,
+    takenEdge: Edge,
+    laterTaken: Bool
   }
 
   def pickPointer(bit: ChoiceBit) =
@@ -60,25 +68,34 @@ spec PairingLoadWhole {
 
   // The Alloc's zero is the nil error.
   def storeIsBad(store: ErrorStore) = store == ErrorBad or store == NoErrorStore
-  // The stores that reach the end of an arm's block, read on the path
-  // through the earlier if's edge.
-  def badReachesArmEnd(edge: Edge, earlierEdge: EarlierEdge) =
+  // Some store that reaches the end of the arm on this edge stores Bad.
+  def badStoreReachesArmEnd(edge: Edge) =
     if armError[edge] != NoErrorStore then armError[edge] == ErrorBad
-    else storeIsBad(earlierStore[earlierEdge])
-  def pairs(edge: Edge, earlierEdge: EarlierEdge) =
-    armPointer[edge] == Nil and badReachesArmEnd(edge, earlierEdge)
-  // THE NAIVE RULE: the load is judged whole.
+    else exists earlierEdge: EarlierEdge { storeIsBad(earlierStore[earlierEdge]) }
+  // Some store that reaches the load through this edge stores Bad: L, or
+  // a store that reaches the end of the arm.
+  def badStoreReachesLoad(edge: Edge) =
+    (hasLaterIf and laterStore == ErrorBad)
+    or badStoreReachesArmEnd(edge)
+  // THE NAIVE RULE: the load is judged whole. Some edge brings nil for u,
+  // and some edge, maybe another, brings a Bad store to the load.
   def reported() =
     (exists edge: Edge { armPointer[edge] == Nil })
-    and (exists edge: Edge { exists earlierEdge: EarlierEdge { badReachesArmEnd(edge, earlierEdge) } })
+    and (exists edge: Edge { badStoreReachesLoad(edge) })
   // The rule of pairing_load.fsl, to pick the programs it does not report.
   def provedReported() =
-    exists edge: Edge { exists earlierEdge: EarlierEdge { pairs(edge, earlierEdge) } }
+    exists edge: Edge {
+      armPointer[edge] == Nil
+      and badStoreReachesLoad(edge)
+    }
+
+  // The witness: the first edge that brings a Bad store to the load.
   def firstEdge() =
-    if exists earlierEdge: EarlierEdge { badReachesArmEnd(0, earlierEdge) } then 0
-    else if exists earlierEdge: EarlierEdge { badReachesArmEnd(1, earlierEdge) } then 1
+    if badStoreReachesLoad(0) then 0
+    else if badStoreReachesLoad(1) then 1
     else 2
-  def firstEarlierEdge(edge: Edge) = if badReachesArmEnd(edge, 0) then 0 else 1
+  def firstEarlierEdge() = if storeIsBad(earlierStore[0]) then 0 else 1
+  def laterStoresBad() = hasLaterIf and laterStore == ErrorBad
 
   init {
     phase = Ready
@@ -89,14 +106,20 @@ spec PairingLoadWhole {
       armPointer[edge] = pickPointer(4 + 4 * edge)
       armError[edge] = pickErrorStore(6 + 4 * edge)
     }
+    hasLaterIf = choice[16]
+    laterStore = pickErrorStore(17)
     verdict = reported()
     witnessEdge = firstEdge()
-    witnessEarlierEdge = firstEarlierEdge(firstEdge())
+    witnessEarlierEdge = firstEarlierEdge()
+    witnessLaterTaken = laterStoresBad()
     errIsBadBeforeSwitch = true
     pointerIsNil = false
     pointerIsOutsideNil = false
     errorIsBad = false
     onWitness = false
+    takenEarlierEdge = 0
+    takenEdge = 0
+    laterTaken = false
   }
 
   // --- the run --------------------------------------------------------------------
@@ -105,6 +128,7 @@ spec PairingLoadWhole {
     requires phase == Ready
     requires not provedReported()
     phase = PastEarlierIf
+    takenEarlierEdge = earlierEdge
     errIsBadBeforeSwitch =
       if earlierStore[earlierEdge] == NoErrorStore then errIsBadBeforeSwitch
       else earlierStore[earlierEdge] == ErrorBad
@@ -113,13 +137,26 @@ spec PairingLoadWhole {
 
   action takeArm(edge: Edge, outsideNil: Bool) {
     requires phase == PastEarlierIf
-    phase = Returned
+    phase = PastSwitch
+    takenEdge = edge
     pointerIsNil = armPointer[edge] == Nil
     pointerIsOutsideNil = armPointer[edge] == Outside and outsideNil
     errorIsBad =
       if armError[edge] == NoErrorStore then errIsBadBeforeSwitch
       else armError[edge] == ErrorBad
     onWitness = onWitness and edge == witnessEdge and not outsideNil
+  }
+
+  // The later if, taken or not, then the return.
+  action laterIf(later: Bool) {
+    requires phase == PastSwitch
+    requires hasLaterIf or not later
+    phase = Returned
+    laterTaken = later
+    errorIsBad =
+      if later and laterStore != NoErrorStore then laterStore == ErrorBad
+      else errorIsBad
+    onWitness = onWitness and later == witnessLaterTaken
   }
 
   terminal { phase == Returned }

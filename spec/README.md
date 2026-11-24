@@ -56,7 +56,7 @@ The specs were checked by editing the rule by hand and re-running. Each edit bel
 | | Both walks started at the early load of the error, so the pointer's store after the loop is missed; both walks started at the pointer's load, so the early error sees the store after the loop | `ReportMeansNilWithBad` |
 | `pairing_load.fsl` | The load judged whole; an arm's store not killing | `ReportMeansNilWithBad` |
 | | The load judged whole when it sits after the later `if` | `ReportMeansNilWithBad` |
-| | The later `if`'s store ignored | `NilWithBadIsReported` |
+| | The later `if`'s store ignored; the later `if` read as always taken, so its store hides the arm's | `NilWithBadIsReported` |
 | | The Alloc's zero forgotten; one store of the earlier if only | `NilWithBadIsReported` |
 | `local_store.fsl` | `followed()` false; a load-only literal not followed | `ConstantNilIsReported` |
 | | An escaped variable followed; a later store not killing; `f()` counted as nil | `ReportMeansANilIsLoaded` |
