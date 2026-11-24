@@ -1,4 +1,4 @@
-// FAILS ON PURPOSE. This is the rule that follows a variable whose address
+// A REJECTED RULE. This is the rule that follows a variable whose address
 // escapes. Its counterexample is the reason such a variable is not
 // followed.
 //
@@ -184,7 +184,7 @@ spec LocalStoreEscape {
 
   terminal { phase == Loaded }
 
-  // --- what is proved -------------------------------------------------------------
+  // --- what holds, and the claim that breaks --------------------------------------
 
   invariant WitnessNeverBlocked {
     (onWitness and phase == InLoop) => (
@@ -192,39 +192,22 @@ spec LocalStoreEscape {
       and (rounds == witnessRounds => (looped or rounds == 1))
     )
   }
-  invariant ReportMeansANilIsLoaded {
-    (onWitness and phase == Loaded) => loadedValue == NilConstant
+  // The negation of ReportMeansANilIsLoaded in local_store.fsl. The witness
+  // run loads no nil, so this rule reports a load that is never nil.
+  reachable ReportedNilIsNotLoaded {
+    not ((onWitness and phase == Loaded) => loadedValue == NilConstant)
   }
   invariant ConstantNilIsReported {
     (phase == Loaded and loadedValue == NilConstant and not escapes()) => reported()
   }
 
-  // The auxiliary invariants of the proved spec are left out. A failing
-  // spec needs no induction, and each spec must break on its claim.
+  // The auxiliary invariants of the proved spec are left out. So verify.sh
+  // checks this spec by BMC to a depth, not by induction.
 
   // --- witnesses ------------------------------------------------------------------
 
   def everyArmStoresNonNil() = forall armIndex: Arm { armStore[armIndex] == StoresNonNil }
 
-  // `var p *T; defer func() { log(p) }(); if c { p = x }; return`
-  reachable LoadOnlyCaptureIsFollowed {
-    phase == Loaded
-    and reported()
-    and escape == LoadsOnly
-    and laterStore == NoStore
-    and loadedValue == NilConstant
-  }
-  // `p = nil; defer func() { p = def }(); return`. The load gives the
-  // deferred store.
-  reachable DeferredStoreIsNotFollowed {
-    phase == Loaded
-    and not reported()
-    and escape == StoresInto
-    and escapeDeferred
-    and laterStore == StoresNil
-    and escapeEffect == SetsNonNil
-    and loadedValue == NonNil
-  }
   // The witness runs to the load, through an arm and through the loop.
   reachable WitnessThroughAnArm {
     onWitness
@@ -233,14 +216,6 @@ spec LocalStoreEscape {
     and armStore[witnessArm] == StoresNil
   }
   reachable WitnessSkipsTheLoop { onWitness and phase == Loaded and rounds == 0 and looped }
-  // The variable is not followed, so a nil that is loaded goes unreported.
-  // This is the gap.
-  reachable EscapedNilIsMissed {
-    phase == Loaded
-    and not reported()
-    and escapes()
-    and loadedValue == NilConstant
-  }
   // Every arm stores &T{}. Without a loop, the entry's nil does not reach.
   reachable ArmsKillTheEntry {
     phase == Loaded

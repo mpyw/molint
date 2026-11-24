@@ -89,8 +89,8 @@ jobs:
         with:
           install_args: packslip:github.com/ymm-oss/fsl/fslc
 
-      # verify.sh holds the specs that must be proved and the ones that must
-      # stay violated, and fails when a spec is in neither.
+      # verify.sh holds the specs that must be proved by induction and the
+      # ones checked by BMC, and fails when a spec is in neither.
       - name: Verify the specs
         run: ./spec/verify.sh
 

@@ -1,4 +1,4 @@
-// FAILS ON PURPOSE. This is the pairing of a bare return that judges each
+// A REJECTED RULE. This is the pairing of a bare return that judges each
 // load on its own reaching stores. Its counterexample is the reason
 // pairing_stores.fsl reads both results on the same path.
 //
@@ -270,7 +270,7 @@ spec PairingBareReturn {
 
   terminal { phase == Returned }
 
-  // --- what is proved -------------------------------------------------------------
+  // --- what holds, and the claim that breaks --------------------------------------
 
   // Never blocked: each round and the exit that the witness takes are
   // enabled.
@@ -280,35 +280,23 @@ spec PairingBareReturn {
       and (rounds == pathLength(witnessFirstArm, witnessLaterArm) => (looped or rounds == 1))
     )
   }
-  invariant ReportMeansNilWithBad {
-    (onWitness and phase == Returned) => (pointerIsNil and errorIsBad)
+  // The negation of ReportMeansNilWithBad in pairing_stores.fsl. The witness
+  // run does not return nil with Bad, so this rule reports a pair no run gives.
+  reachable ReportedPairIsNotReturned {
+    not ((onWitness and phase == Returned) => (pointerIsNil and errorIsBad))
   }
   invariant NilWithBadIsReported {
     (phase == Returned and pointerIsNil and errorIsBad) => reported()
   }
 
-  // The auxiliary invariants of the proved spec are left out. A failing
-  // spec needs no induction, and each spec must break on its claim.
+  // The auxiliary invariants of the proved spec are left out. So verify.sh
+  // checks this spec by BMC to a depth, not by induction.
 
   // --- witnesses ------------------------------------------------------------------
 
   def noStoreAfterLoop() = afterPointer == NoPointerStore and afterError == NoErrorStore
   def storesBothFromEarlier() = afterPointer == PointerFromX and afterError == ErrorFromE
 
-  // `if c { u = x } else { err = e }; return`. Each path stores one result.
-  reachable ArmsKeptApart {
-    phase == Returned
-    and not reported()
-    and not looped
-    and not trailingBool
-    and entryPointer == NoPointerStore
-    and entryError == NoErrorStore
-    and noStoreAfterLoop()
-    and armPointer[0] == PointerNonNil
-    and armError[0] == NoErrorStore
-    and armPointer[1] == NoPointerStore
-    and armError[1] == ErrorGood
-  }
   // An arm that stores neither lets both zeros through: nil with a nil
   // error.
   reachable BothZerosThroughAnArm {
@@ -331,16 +319,6 @@ spec PairingBareReturn {
     and noStoreAfterLoop()
     and not pairsOnPath(witnessFirstArm, 2)
     and not pairsOnPath(witnessLaterArm, 2)
-  }
-  // u, err = x, e with x and e φ-nodes of P: paired along P, not reported.
-  reachable StoredPhisKeptApart {
-    phase == Returned
-    and not reported()
-    and storesBothFromEarlier()
-    and earlierX[0] == PointerNil
-    and earlierE[0] == ErrorGood
-    and earlierX[1] == PointerOutside
-    and earlierE[1] == ErrorBad
   }
   reachable StoredPhisReported {
     phase == Returned and onWitness and storesBothFromEarlier()

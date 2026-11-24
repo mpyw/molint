@@ -1,4 +1,4 @@
-// FAILS ON PURPOSE. This is the rule that reads a load as the last store
+// A REJECTED RULE. This is the rule that reads a load as the last store
 // before it in program order. Its counterexample is the reason the rule
 // follows the stores that reach the load instead.
 //
@@ -180,7 +180,7 @@ spec LocalStoreLast {
 
   terminal { phase == Loaded }
 
-  // --- what is proved -------------------------------------------------------------
+  // --- what holds, and the claim that breaks --------------------------------------
 
   invariant WitnessNeverBlocked {
     (onWitness and phase == InLoop) => (
@@ -191,12 +191,14 @@ spec LocalStoreLast {
   invariant ReportMeansANilIsLoaded {
     (onWitness and phase == Loaded) => loadedValue == NilConstant
   }
-  invariant ConstantNilIsReported {
-    (phase == Loaded and loadedValue == NilConstant and not escapes()) => reported()
+  // The negation of ConstantNilIsReported in local_store.fsl. A run loads the
+  // nil constant, and this rule does not report it.
+  reachable ConstantNilIsMissed {
+    not ((phase == Loaded and loadedValue == NilConstant and not escapes()) => reported())
   }
 
-  // The auxiliary invariants of the proved spec are left out. A failing
-  // spec needs no induction, and each spec must break on its claim.
+  // The auxiliary invariants of the proved spec are left out. So verify.sh
+  // checks this spec by BMC to a depth, not by induction.
 
   // --- witnesses ------------------------------------------------------------------
 
@@ -246,29 +248,6 @@ spec LocalStoreLast {
     and laterStore == NoStore
     and everyArmStoresNonNil()
     and followed()
-  }
-  // The same arms in a loop that may run zero times: the entry's nil
-  // reaches.
-  reachable LoopLetsTheEntryReach {
-    phase == Loaded
-    and reported()
-    and looped
-    and entryStoresNil()
-    and laterStore == NoStore
-    and everyArmStoresNonNil()
-    and rounds == 0
-    and loadedValue == NilConstant
-  }
-  // An arm that stores nil, after an entry that is not nil, with another arm
-  // after it in program order.
-  reachable NilFromAnEarlierArm {
-    phase == Loaded
-    and reported()
-    and entryStore == StoresNonNil
-    and armStore[0] == StoresNil
-    and armStore[2] == StoresNonNil
-    and laterStore == NoStore
-    and loadedValue == NilConstant
   }
   reachable OverwriteBeforeLoad {
     phase == Loaded

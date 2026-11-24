@@ -66,36 +66,36 @@ The specs were checked by editing the rule by hand and re-running. Each edit bel
 
 One edit survives, and it is equivalent: in `nil_value.fsl`, letting a `NotNil` loop edge bring the constant nil. Such a check can never succeed, and ASSUME-2 leaves it out.
 
-## What fails, and why
+## What breaks, and why
 
-These are not regressions. Each fails on the named invariant, and `verify.sh` pins it. There are two kinds.
+Each spec below models a rule that breaks a proved spec's claim. It states the negation of that claim as a `reachable`, so the rule is shown wrong by a witness run. `verify.sh` checks them by BMC to depth 8, and every witness must be reached. They leave out the proved spec's auxiliary invariants, so induction cannot prove them. There are two kinds.
 
 ### Naive: a rejected rule
 
 The counterexample is the reason the rule was rejected. A naive spec that over-reports runs only programs the proved rule does not report, so the report is the naive rule's own. Each of its checks can pass on some run, so the edge the witness is blocked on is a live one.
 
-| Spec | Rule it models | Counterexample fslc finds | Breaks |
+| Spec | Rule it models | Counterexample | Witness |
 | --- | --- | --- | --- |
-| `nil_value_nocheck.fsl` | A nil check on the way does not stop a nil | `a, b := f(), nil; for cond() { a, b = b, a }; if a != nil { return a }` is reported | `ReportMeansANilIsReturned` |
-| `nil_value_nophi.fsl` | A φ-node is never a nil value | `a := (*T)(nil); for cond() { if x := f(); x != nil { a = x } }; return a` is missed: zero rounds return nil | `CheckedOrConstantNilIsReported` |
-| `pairing_naive.fsl` | The pointer and the error are judged apart | `u, err := (*T)(nil), error(nil); for next() { u, err = f(), g() }; switch { case a: return u, errX; case u != nil: return u, err }` is reported | `ReportMeansNilWithBad` |
-| `pairing_nonrecursive.fsl` | φ-nodes of an earlier block are judged whole | `u, err := &T{}, nil; for next() { if b { u, err = nil, g() } else { u, err = h(), g() } }; if u == nil { return u, err }` is reported | `ReportMeansNilWithBad` |
-| `pairing_bare_return.fsl` | Each load of a bare return is judged on its own reaching stores | With a defer, `u = f(); for next() { if b { u, err = nil, g() } else { u, err = nil, errX } }; return` is reported | `ReportMeansNilWithBad` |
-| `pairing_load_whole.fsl` | A load paired with a φ-node is judged whole | With err captured by a load-only defer, `if a { err = g() }; switch { case c0: u, err = nil, errX; case c1: u = f(); default: u, err = f(), nil }; return u, err` is reported | `ReportMeansNilWithBad` |
-| `local_store_last.fsl` | A load reads the last store in program order | `var p *T; for cond() { switch { case a: p = nil; case b: p = f(); default: p = &T{} } }; return` is missed: zero rounds load nil | `ConstantNilIsReported` |
-| `local_store_escape.fsl` | A variable is followed whatever holds its address | `var p *T; for cond() { p = &T{} }; set(&p); return` is reported, and `set` stores into p | `ReportMeansANilIsLoaded` |
-| `result_zero_nocheck.fsl` | A comparison on the way does not stop a zero | `var r mo.Result[T]; if c { r = f() }; if r != (mo.Result[T]{}) { use(r) }` is reported | `ReportMeansAZeroIsUsed` |
-| `result_zero_nokill.fsl` | A zero ever stored counts at the use | `...; if r == (mo.Result[T]{}) { ... }; r = f(); return r` is reported | `ReportMeansAZeroIsUsed` |
+| `nil_value_nocheck.fsl` | A nil check on the way does not stop a nil | `a, b := f(), nil; for cond() { a, b = b, a }; if a != nil { return a }` is reported | `ReportedNilIsNotReturned` |
+| `nil_value_nophi.fsl` | A φ-node is never a nil value | `a := (*T)(nil); for cond() { if x := f(); x != nil { a = x } }; return a` is missed: zero rounds return nil | `CheckedOrConstantNilIsMissed` |
+| `pairing_naive.fsl` | The pointer and the error are judged apart | `u, err := (*T)(nil), error(nil); for next() { u, err = f(), g() }; switch { case a: return u, errX; case u != nil: return u, err }` is reported | `ReportedPairIsNotReturned` |
+| `pairing_nonrecursive.fsl` | φ-nodes of an earlier block are judged whole | `u, err := &T{}, nil; for next() { if b { u, err = nil, g() } else { u, err = h(), g() } }; if u == nil { return u, err }` is reported | `ReportedPairIsNotReturned` |
+| `pairing_bare_return.fsl` | Each load of a bare return is judged on its own reaching stores | With a defer, `u = f(); for next() { if b { u, err = nil, g() } else { u, err = nil, errX } }; return` is reported | `ReportedPairIsNotReturned` |
+| `pairing_load_whole.fsl` | A load paired with a φ-node is judged whole | With err captured by a load-only defer, `if a { err = g() }; switch { case c0: u, err = nil, errX; case c1: u = f(); default: u, err = f(), nil }; return u, err` is reported | `ReportedPairIsNotReturned` |
+| `local_store_last.fsl` | A load reads the last store in program order | `var p *T; for cond() { switch { case a: p = nil; case b: p = f(); default: p = &T{} } }; return` is missed: zero rounds load nil | `ConstantNilIsMissed` |
+| `local_store_escape.fsl` | A variable is followed whatever holds its address | `var p *T; for cond() { p = &T{} }; set(&p); return` is reported, and `set` stores into p | `ReportedNilIsNotLoaded` |
+| `result_zero_nocheck.fsl` | A comparison on the way does not stop a zero | `var r mo.Result[T]; if c { r = f() }; if r != (mo.Result[T]{}) { use(r) }` is reported | `ReportedZeroIsNotUsed` |
+| `result_zero_nokill.fsl` | A zero ever stored counts at the use | `...; if r == (mo.Result[T]{}) { ... }; r = f(); return r` is reported | `ReportedZeroIsNotUsed` |
 
 ### Gap: a limitation the chosen rule accepts
 
 The rule as design/rules.md writes it reports these, although no run gives the value. They are listed as gaps or consequences there. Each proved spec leaves them out by an `ASSUME` that names the spec.
 
-| Spec | Counterexample | Why it is accepted | Named by | Breaks |
+| Spec | Counterexample | Why it is accepted | Named by | Witness |
 | --- | --- | --- | --- | --- |
-| `nil_value_correlated.fsl` | `p := nil; if c { p = &T{} }; if c { return p }` is reported. The two branches test the same condition | A nil value is nil on some path, with branches taken as independent | ASSUME-1 of every proved spec | `ReportMeansANilIsReturned` |
-| `nil_value_dead_check.fsl` | `p := &T{}; if p == nil { return p }` is reported. The branch is dead | Only a nil check of the value itself narrows the paths; whether it can succeed is not read | ASSUME-2 of `nil_value.fsl`, `pairing.fsl`, `result_zero.fsl` | `ReportMeansANilIsReturned` |
-| `return_store_deferred.fsl` | `defer func() { if p == nil { p = def } }(); return nil` is reported. F returns `def` | A return with operands is judged on what it stores, and this one says nil | ASSUME-4 of `local_store.fsl` | `ReportMeansANilIsReturned` |
+| `nil_value_correlated.fsl` | `p := nil; if c { p = &T{} }; if c { return p }` is reported. The two branches test the same condition | A nil value is nil on some path, with branches taken as independent | ASSUME-1 of every proved spec | `ReportedNilIsNotReturned` |
+| `nil_value_dead_check.fsl` | `p := &T{}; if p == nil { return p }` is reported. The branch is dead | Only a nil check of the value itself narrows the paths; whether it can succeed is not read | ASSUME-2 of `nil_value.fsl`, `pairing.fsl`, `result_zero.fsl` | `ReportedNilIsNotReturned` |
+| `return_store_deferred.fsl` | `defer func() { if p == nil { p = def } }(); return nil` is reported. F returns `def` | A return with operands is judged on what it stores, and this one says nil | ASSUME-4 of `local_store.fsl` | `ReportedNilIsNotReturned` |
 
 One more gap has no spec. A check on a loaded variable that SSA does not lift is not carried to later loads: a nil check, and a comparison with the zero Result as well. So `if p == nil { p = def }` on a captured p, or on a named result in a function with a defer, is reported through the Alloc's zero. `local_store.fsl` leaves it out by its ASSUME-3, and `result_zero.fsl` models lifted variables only.
 
@@ -115,7 +115,7 @@ One more gap has no spec. A check on a loaded variable that SSA does not lift is
 ./verify.sh
 ```
 
-The script reads each verdict from `fslc`'s JSON with Python, never from its exit code. The proved specs must be `proved` under induction. The naive and gap specs must be `violated` on the named invariant, and the output says which kind each is. A spec in the directory that is named in no list fails the run. Without `fslc` the script skips the specs, except in CI (`CI` set), where it fails. CI and `mise install` use the fslc version that `mise.toml` pins.
+The script reads each verdict from `fslc`'s JSON with Python, never from its exit code. The proved specs must be `proved` under induction. The naive and gap specs must be `verified` by BMC to depth 8, which also requires every `reachable` to be reached. A spec in the directory that is named in no list fails the run. Without `fslc` the script skips the specs, except in CI (`CI` set), where it fails. CI and `mise install` use the fslc version that `mise.toml` pins.
 
 ## Mutation
 

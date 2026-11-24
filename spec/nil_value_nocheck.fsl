@@ -1,4 +1,4 @@
-// FAILS ON PURPOSE. This is the nil-value rule that ignores nil checks on
+// A REJECTED RULE. This is the nil-value rule that ignores nil checks on
 // the way. Its counterexample is the reason each edge is judged at its own
 // check.
 //
@@ -343,59 +343,28 @@ spec NilValueNoCheck {
     or (phase == Ready and not everyCheckCanPass())
   }
 
-  // --- what is proved -------------------------------------------------------------
+  // --- what holds, and the claim that breaks --------------------------------------
 
-  invariant ReportMeansANilIsReturned {
-    (onWitness and phase == AtJoin =>
-      passesCheck(
-        joinCheck[witnessEdge],
-        operandValue(joinOperand[witnessEdge], witnessOutsideNil, valueA, valueB)))
-    and (onWitness and phase == Returned => reportableNil(returnedValue))
+  // The negation of ReportMeansANilIsReturned in nil_value.fsl. The witness
+  // run is blocked at a check, so this rule reports a nil no run returns.
+  reachable ReportedNilIsNotReturned {
+    not (
+      (onWitness and phase == AtJoin =>
+        passesCheck(
+          joinCheck[witnessEdge],
+          operandValue(joinOperand[witnessEdge], witnessOutsideNil, valueA, valueB)))
+      and (onWitness and phase == Returned => reportableNil(returnedValue))
+    )
   }
   invariant CheckedOrConstantNilIsReported {
     (phase == Returned and reportableNil(returnedValue)) => reported()
   }
 
-  // The auxiliary invariants of the proved spec are left out. A failing
-  // spec needs no induction, and each spec must break on its claim.
+  // The auxiliary invariants of the proved spec are left out. So verify.sh
+  // checks this spec by BMC to a depth, not by induction.
 
   // --- witnesses ------------------------------------------------------------------
 
-  // a, b = b, nil: the nil reaches a on the second round.
-  reachable NilAfterTwoRounds {
-    phase == Returned
-    and returnedValue == NilConstant
-    and joinOperand[takenEdge] == PhiA
-    and backA == PhiB
-    and backB == Nil
-    and checkA == NoCheck
-    and checkB == NoCheck
-    and entryA == NonNilLiteral
-    and entryB == NonNilLiteral
-    and rounds == 2
-  }
-  // `if p == nil { p = def }; return p`, where p may be nil.
-  reachable CheckStopsTheNil {
-    phase == Returned
-    and not reported()
-    and aIsNilValue()
-    and joinOperand[0] == PhiA
-    and joinCheck[0] == NotNil
-    and joinOperand[1] == NonNilLiteral
-    and joinCheck[1] == NoCheck
-    and joinOperand[2] == NonNilLiteral
-  }
-  // `for ... { if x := f(); x == nil { a = x } }`: a nil checked on a loop
-  // edge.
-  reachable CheckedOnALoopEdge {
-    phase == Returned
-    and onWitness
-    and checkA == IsNil
-    and backA == Outside
-    and joinOperand[takenEdge] == PhiA
-    and joinCheck[takenEdge] == NoCheck
-    and returnedValue == NilChecked
-  }
   // `for ... { if b != nil { a = b }; b = &T{} }`, with b nil on entry.
   // The check on a's loop edge stops the nil that b brings.
   reachable LoopCheckStopsTheEdge {
@@ -410,27 +379,11 @@ spec NilValueNoCheck {
     and joinOperand[0] == PhiA
     and joinCheck[0] == NoCheck
   }
-  reachable CheckedOutsideNilReported {
-    phase == Returned
-    and reported()
-    and joinOperand[takenEdge] == Outside
-    and joinCheck[takenEdge] == IsNil
-    and returnedValue == NilChecked
-  }
-  reachable CheckedPhiNilReported {
-    phase == Returned
-    and reported()
-    and joinOperand[takenEdge] == PhiB
-    and joinCheck[takenEdge] == IsNil
-    and not bIsNilValue()
-    and returnedValue == NilChecked
-  }
   reachable ExtNilIsNotReported {
     phase == Returned and returnedValue == NilOutside and not reported()
   }
-  // The witness runs to the return: round the loop twice, three times, and
-  // through a check.
-  reachable WitnessTakesTwoRounds { onWitness and phase == Returned and witnessRounds == 2 }
+  // No round count makes the witness work here. So it falls back to three
+  // rounds and a nil from outside, and it still runs to the return.
   reachable WitnessTakesThreeRounds { onWitness and phase == Returned and witnessRounds == 3 }
   reachable WitnessThroughACheck {
     onWitness

@@ -1,4 +1,4 @@
-// FAILS ON PURPOSE. It documents an accepted consequence of return-nil. A
+// AN ACCEPTED GAP. It documents an accepted consequence of return-nil. A
 // return with operands is judged on the values it stores, whatever captures
 // the result variables. See "return-nil" in design/rules.md.
 //
@@ -15,8 +15,9 @@
 // stores V, runs the literal, and loads p as the result.
 //
 // ReportMeansANilIsReturned is the claim the other specs prove. When the
-// rule reports, the witness run returns the nil constant. It breaks here,
-// and that is the consequence the rules accept. local_store_escape.fsl
+// rule reports, the witness run returns the nil constant. It would break
+// here, and that is the consequence the rules accept. So its negation,
+// ReportedNilIsNotReturned, is reachable. local_store_escape.fsl
 // holds the bare-return form, which loads p and is not followed.
 fsl 5
 spec ReturnStoreDeferred {
@@ -91,8 +92,10 @@ spec ReturnStoreDeferred {
 
   terminal { phase == Returned }
 
-  invariant ReportMeansANilIsReturned {
-    (onWitness and phase == Returned) => returnedValue == NilConstant
+  // The negation of ReportMeansANilIsReturned in the other specs. The return
+  // stores nil, and the deferred literal replaces it.
+  reachable ReportedNilIsNotReturned {
+    not ((onWitness and phase == Returned) => returnedValue == NilConstant)
   }
 
   reachable KeptNilIsReturned {

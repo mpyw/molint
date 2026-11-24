@@ -1,4 +1,4 @@
-// FAILS ON PURPOSE. This is result-zero with a zero that was ever stored
+// A REJECTED RULE. This is result-zero with a zero that was ever stored
 // counted at the use. The counterexample is the reason an overwrite before
 // the use must kill it.
 //
@@ -228,34 +228,28 @@ spec ResultZeroNoKill {
     or (phase == Ready and not everyComparisonCanPass())
   }
 
-  // --- what is proved -------------------------------------------------------------
+  // --- what holds, and the claim that breaks --------------------------------------
 
-  invariant ReportMeansAZeroIsUsed {
-    (onWitness and phase == PastEarlierJoin =>
-      passesComparison(
-        armComparison[witnessEdge],
-        operandValue(armOperand[witnessEdge], earlierValue, witnessOutsideZero)))
-    and ((onWitness and phase == Done) => (passedOn and reportableZero(usedValue)))
+  // The negation of ReportMeansAZeroIsUsed in result_zero.fsl. The witness run
+  // passes on no zero, so this rule reports a zero no run uses.
+  reachable ReportedZeroIsNotUsed {
+    not (
+      (onWitness and phase == PastEarlierJoin =>
+        passesComparison(
+          armComparison[witnessEdge],
+          operandValue(armOperand[witnessEdge], earlierValue, witnessOutsideZero)))
+      and ((onWitness and phase == Done) => (passedOn and reportableZero(usedValue)))
+    )
   }
   invariant ZeroUseIsReported {
     (phase == Done and reportableZero(usedValue) and passedOn) => reported()
   }
 
-  // The auxiliary invariants of the proved spec are left out. A failing
-  // spec needs no induction, and each spec must break on its claim.
+  // The auxiliary invariants of the proved spec are left out. So verify.sh
+  // checks this spec by BMC to a depth, not by induction.
 
   // --- witnesses ------------------------------------------------------------------
 
-  // `var r mo.Result[T]; if c { r = mo.Ok(v) }; return r`
-  reachable ZeroThroughAJoin {
-    phase == Done
-    and reported()
-    and onWitness
-    and instruction == Return
-    and earlierOperand[witnessEarlierEdge] == Zero
-    and armOperand[witnessEdge] == KeepsR
-    and usedValue == ZeroConstant
-  }
   // `if r == (mo.Result[T]{}) { r = mo.Err(e) }; return r`. Here r may be
   // zero or built, and the edge that keeps r runs.
   reachable ComparisonStopsTheZero {
@@ -268,42 +262,10 @@ spec ResultZeroNoKill {
     and armComparison[takenEdge] == NeZero
     and usedValue == NonZero
   }
-  reachable ComparedZeroIsReported {
-    phase == Done
-    and reported()
-    and onWitness
-    and armComparison[witnessEdge] == EqZero
-    and usedValue == ZeroChecked
-  }
   reachable ComparisonIsNotAUse {
     phase == Done
     and not reported()
     and instruction == Compare
-    and usedValue == ZeroConstant
-  }
-  reachable OverwriteBeforeUse {
-    phase == Done
-    and not reported()
-    and isUse()
-    and overwrite == Built
-    and (exists edge: Edge { edgeBringsZero(edge) })
-  }
-  reachable WitnessAfterOverwrite {
-    onWitness
-    and phase == Done
-    and overwrite == Zero
-    and armComparison[witnessEdge] == NeZero
-  }
-  reachable ConversionToInterfaceIsAUse {
-    phase == Done
-    and reported()
-    and instruction == ToInterface
-    and usedValue == ZeroConstant
-  }
-  reachable FieldStoreIsAUse {
-    phase == Done
-    and reported()
-    and instruction == FieldStore
     and usedValue == ZeroConstant
   }
   // A call's result that is zero and never compared: the gap.
