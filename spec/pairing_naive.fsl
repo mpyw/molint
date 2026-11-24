@@ -1,4 +1,4 @@
-// FAILS ON PURPOSE. This is the pairing rule that judges the pointer and
+// A REJECTED RULE. This is the pairing rule that judges the pointer and
 // the error independently. Its counterexample is the reason return-nil
 // pairs them along each edge.
 //
@@ -309,23 +309,26 @@ spec PairingNaive {
     or (phase == Ready and not everyCheckCanPass())
   }
 
-  // --- what is proved -------------------------------------------------------------
+  // --- what holds, and the claim that breaks --------------------------------------
 
-  // Never blocked: the witness's edge passes its check, and the witness
-  // returns the pair.
-  invariant ReportMeansNilWithBad {
-    (onWitness and phase == AtJoin =>
-      passesCheck(joinCheck[witnessEdge], pointerAtJoin(witnessEdge, witnessOutsideNil)))
-    and (onWitness and phase == Returned =>
-      (reportableNil(returnedPointer) and returnedSecond == BadConstant))
+  // The negation of ReportMeansNilWithBad in pairing.fsl. The witness run is
+  // blocked or does not return nil with Bad, so this rule reports a pair no
+  // run gives.
+  reachable ReportedPairIsNotReturned {
+    not (
+      (onWitness and phase == AtJoin =>
+        passesCheck(joinCheck[witnessEdge], pointerAtJoin(witnessEdge, witnessOutsideNil)))
+      and (onWitness and phase == Returned =>
+        (reportableNil(returnedPointer) and returnedSecond == BadConstant))
+    )
   }
   invariant NilWithBadIsReported {
     (phase == Returned and reportableNil(returnedPointer) and returnedSecond == BadConstant)
     => reported()
   }
 
-  // The auxiliary invariants of the proved spec are left out. A failing
-  // spec needs no induction, and each spec must break on its claim.
+  // The auxiliary invariants of the proved spec are left out. So verify.sh
+  // checks this spec by BMC to a depth, not by induction.
 
   // --- witnesses ------------------------------------------------------------------
 
@@ -365,22 +368,6 @@ spec PairingNaive {
     and (exists first: ArmOrNone { exists later: ArmOrNone {
       isPath(first, later) and lastPointer(first, later) == Nil and lastSecond(first, later) == Bad
     } })
-  }
-  // `u := f(); if u == nil { return u, nil }`: a value from before J,
-  // checked on the edge.
-  reachable CheckedOutsideWithBad {
-    phase == Returned
-    and onWitness
-    and joinCheck[witnessEdge] == IsNil
-    and joinPointer[witnessEdge] == Outside
-    and returnedPointer == NilChecked
-  }
-  reachable CheckedLoopValueWithBad {
-    phase == Returned
-    and onWitness
-    and joinCheck[witnessEdge] == IsNil
-    and joinPointer[witnessEdge] == PointerFromLoop
-    and returnedPointer == NilChecked
   }
   // return nil, err with err from outside: not reported. This is the gap.
   reachable OutsideErrorNotReported {

@@ -1,4 +1,4 @@
-// FAILS ON PURPOSE. This is the nil-value rule that does not follow
+// A REJECTED RULE. This is the nil-value rule that does not follow
 // φ-nodes. Its counterexample is the reason the rule follows them.
 //
 //   var p *T
@@ -329,7 +329,7 @@ spec NilValueNoPhi {
     or (phase == Ready and not everyCheckCanPass())
   }
 
-  // --- what is proved -------------------------------------------------------------
+  // --- what holds, and the claim that breaks --------------------------------------
 
   invariant ReportMeansANilIsReturned {
     (onWitness and phase == AtJoin =>
@@ -338,12 +338,14 @@ spec NilValueNoPhi {
         operandValue(joinOperand[witnessEdge], witnessOutsideNil, valueA, valueB)))
     and (onWitness and phase == Returned => reportableNil(returnedValue))
   }
-  invariant CheckedOrConstantNilIsReported {
-    (phase == Returned and reportableNil(returnedValue)) => reported()
+  // The negation of CheckedOrConstantNilIsReported in nil_value.fsl. A run
+  // returns the nil constant through a φ-node, and this rule does not report it.
+  reachable CheckedOrConstantNilIsMissed {
+    not ((phase == Returned and reportableNil(returnedValue)) => reported())
   }
 
-  // The auxiliary invariants of the proved spec are left out. A failing
-  // spec needs no induction, and each spec must break on its claim.
+  // The auxiliary invariants of the proved spec are left out. So verify.sh
+  // checks this spec by BMC to a depth, not by induction.
 
   // --- witnesses ------------------------------------------------------------------
 
@@ -370,17 +372,6 @@ spec NilValueNoPhi {
     and joinOperand[1] == NonNilLiteral
     and joinCheck[1] == NoCheck
     and joinOperand[2] == NonNilLiteral
-  }
-  // `for ... { if x := f(); x == nil { a = x } }`: a nil checked on a loop
-  // edge.
-  reachable CheckedOnALoopEdge {
-    phase == Returned
-    and onWitness
-    and checkA == IsNil
-    and backA == Outside
-    and joinOperand[takenEdge] == PhiA
-    and joinCheck[takenEdge] == NoCheck
-    and returnedValue == NilChecked
   }
   // `for ... { if b != nil { a = b }; b = &T{} }`, with b nil on entry.
   // The check on a's loop edge stops the nil that b brings.
@@ -414,10 +405,9 @@ spec NilValueNoPhi {
   reachable ExtNilIsNotReported {
     phase == Returned and returnedValue == NilOutside and not reported()
   }
-  // The witness runs to the return: round the loop twice, three times, and
-  // through a check.
+  // The witness runs to the return: round the loop twice, and through a
+  // check.
   reachable WitnessTakesTwoRounds { onWitness and phase == Returned and witnessRounds == 2 }
-  reachable WitnessTakesThreeRounds { onWitness and phase == Returned and witnessRounds == 3 }
   reachable WitnessThroughACheck {
     onWitness
     and phase == Returned

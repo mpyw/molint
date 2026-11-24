@@ -1,4 +1,4 @@
-// FAILS ON PURPOSE. It documents an accepted gap of the nil-value rule:
+// AN ACCEPTED GAP. It documents an accepted gap of the nil-value rule:
 // conditions that correlate. design/rules.md lists it under Gaps.
 //
 // The rule reads a φ-node as a nil value when one of its edges brings the
@@ -18,7 +18,7 @@
 // witness run is the run that verdict stands for: the nil edge of the
 // φ-node, then the return. With the same condition, the second branch
 // cannot take the return after the first edge. So ReportMeansANilIsReturned
-// breaks.
+// would break, and its negation ReportedNilIsNotReturned is reachable.
 //
 // design/rules.md defines a nil value as nil on some path, with branches
 // taken as independent. nil_value.fsl proves that meaning under its
@@ -102,10 +102,13 @@ spec NilValueCorrelated {
 
   terminal { phase == Returned }
 
-  // The witness can take `return p` (d true), and it returns nil.
-  invariant ReportMeansANilIsReturned {
-    (onWitness and phase == Joined => (not sameCondition or firstCondition))
-    and (onWitness and phase == Returned => returnedValue == NilConstant)
+  // The negation of ReportMeansANilIsReturned in nil_value.fsl. With the same
+  // condition, the witness run cannot take the return after the nil edge.
+  reachable ReportedNilIsNotReturned {
+    not (
+      (onWitness and phase == Joined => (not sameCondition or firstCondition))
+      and (onWitness and phase == Returned => returnedValue == NilConstant)
+    )
   }
 
   reachable IndependentReturnsNil {

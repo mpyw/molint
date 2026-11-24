@@ -1,4 +1,4 @@
-// FAILS ON PURPOSE. It documents an accepted gap of the nil-value rule: a
+// AN ACCEPTED GAP. It documents an accepted gap of the nil-value rule: a
 // nil check that can never pass. design/rules.md lists it under Gaps.
 //
 // "A value that a dominating branch checks to be nil" is a nil value,
@@ -331,21 +331,25 @@ spec NilValueDeadCheck {
     or (phase == Ready and not everyCheckCanPass())
   }
 
-  // --- what is proved -------------------------------------------------------------
+  // --- what holds, and the claim that breaks --------------------------------------
 
-  invariant ReportMeansANilIsReturned {
-    (onWitness and phase == AtJoin =>
-      passesCheck(
-        joinCheck[witnessEdge],
-        operandValue(joinOperand[witnessEdge], witnessOutsideNil, valueA, valueB)))
-    and (onWitness and phase == Returned => reportableNil(returnedValue))
+  // The negation of ReportMeansANilIsReturned in nil_value.fsl. The witness
+  // run is blocked at a check that can never pass.
+  reachable ReportedNilIsNotReturned {
+    not (
+      (onWitness and phase == AtJoin =>
+        passesCheck(
+          joinCheck[witnessEdge],
+          operandValue(joinOperand[witnessEdge], witnessOutsideNil, valueA, valueB)))
+      and (onWitness and phase == Returned => reportableNil(returnedValue))
+    )
   }
   invariant CheckedOrConstantNilIsReported {
     (phase == Returned and reportableNil(returnedValue)) => reported()
   }
 
-  // The auxiliary invariants of the proved spec are left out. A failing
-  // spec needs no induction, and each spec must break on its claim.
+  // The auxiliary invariants of the proved spec are left out. So verify.sh
+  // checks this spec by BMC to a depth, not by induction.
 
   // --- witnesses ------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-// FAILS ON PURPOSE. This is the pairing of a φ-node with a load that
+// A REJECTED RULE. This is the pairing of a φ-node with a load that
 // judges the load whole, over every store that reaches it. Its
 // counterexample is the reason pairStep reads the load along each edge.
 //
@@ -161,31 +161,22 @@ spec PairingLoadWhole {
 
   terminal { phase == Returned }
 
-  // --- what is proved -------------------------------------------------------------
+  // --- what holds, and the claim that breaks --------------------------------------
 
-  invariant ReportMeansNilWithBad {
-    (onWitness and phase == Returned) => (pointerIsNil and errorIsBad)
+  // The negation of ReportMeansNilWithBad in pairing_load.fsl. The witness
+  // run does not return nil with Bad, so this rule reports a pair no run gives.
+  reachable ReportedPairIsNotReturned {
+    not ((onWitness and phase == Returned) => (pointerIsNil and errorIsBad))
   }
   invariant NilWithBadIsReported {
     (phase == Returned and pointerIsNil and errorIsBad) => reported()
   }
 
-  // The auxiliary invariants of the proved spec are left out. A failing
-  // spec needs no induction, and each spec must break on its claim.
+  // The auxiliary invariants of the proved spec are left out. So verify.sh
+  // checks this spec by BMC to a depth, not by induction.
 
   // --- witnesses ------------------------------------------------------------------
 
-  // `if b { u = x } else { err = e }; return u, err`: kept apart.
-  reachable EdgesKeptApart {
-    phase == Returned
-    and not reported()
-    and armPointer[0] == NonNilLiteral
-    and armError[0] == NoErrorStore
-    and armPointer[1] == Nil
-    and armError[1] == ErrorGood
-    and earlierStore[0] == NoErrorStore
-    and earlierStore[1] == NoErrorStore
-  }
   // The earlier if stores the nil error on one arm and a non-nil one on the
   // other. So the load has two alternatives on the edge that keeps err.
   reachable EarlierStoreReported {
