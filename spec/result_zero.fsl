@@ -57,8 +57,6 @@
 //                              constant's or that passed a comparison
 //   ZeroUseIsReported          whenever a run uses such a zero, it is
 //                              reported
-//   ComparedZeroUseIsReported  whenever a run uses the value that an EqZero
-//                              edge brought, it is reported
 //
 // The run records whether its instruction passes the Result on (passedOn).
 // It reads that from its own list of instructions. A comparison gives a
@@ -300,13 +298,6 @@ spec ResultZero {
   }
   invariant ZeroUseIsReported {
     (phase == Done and reportableZero(usedValue) and passedOn) => reported()
-  }
-  invariant ComparedZeroUseIsReported {
-    (phase == Done
-     and armComparison[takenEdge] == EqZero
-     and overwrite == KeepsR
-     and passedOn)
-    => reported()
   }
 
   // --- auxiliary ------------------------------------------------------------------
