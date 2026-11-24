@@ -13,6 +13,8 @@ import (
 type storeDef struct {
 	value ssa.Value
 	block *ssa.BasicBlock
+	// instr is the store, or the Alloc for its zero value.
+	instr ssa.Instruction
 }
 
 // storesReaching lists the values that the stores reaching load bring. The
@@ -30,12 +32,24 @@ func storesReaching(a *ssa.Alloc, load ssa.Instruction) []storeDef {
 //
 //declscope:shared // pair.go starts the walk at the end of a predecessor
 func storesBefore(a *ssa.Alloc, b *ssa.BasicBlock, end int) []storeDef {
+	return storesUntil(a, b, end, nil)
+}
+
+// storesUntil is storesBefore with a stop. A path that meets an instruction
+// stop accepts, before any store, brings nothing. A nil stop accepts none.
+//
+//declscope:shared // escape.go stops the walk where other code may run
+func storesUntil(a *ssa.Alloc, b *ssa.BasicBlock, end int, stop func(ssa.Instruction) bool) []storeDef {
 	var out []storeDef
 	seen := make(map[*ssa.BasicBlock]bool)
 	var walk func(b *ssa.BasicBlock, end int)
 	walk = func(b *ssa.BasicBlock, end int) {
-		if d, ok := storeLast(a, b, end); ok {
+		d, ok, stopped := storeScan(a, b, end, stop)
+		if ok {
 			out = append(out, d)
+			return
+		}
+		if stopped {
 			return
 		}
 		for _, p := range b.Preds {
@@ -53,12 +67,24 @@ func storesBefore(a *ssa.Alloc, b *ssa.BasicBlock, end int) []storeDef {
 //
 //declscope:shared // pair.go walks back from a load along one edge
 func storeLast(a *ssa.Alloc, b *ssa.BasicBlock, end int) (storeDef, bool) {
+	d, ok, _ := storeScan(a, b, end, nil)
+	return d, ok
+}
+
+// storeScan goes back from end in b. It finds the last store into a, or a
+// itself. Or it meets an instruction stop accepts first, and then stopped is
+// true.
+func storeScan(a *ssa.Alloc, b *ssa.BasicBlock, end int, stop func(ssa.Instruction) bool) (d storeDef, ok, stopped bool) {
 	for i := end - 1; i >= 0; i-- {
-		if d, ok := storeInto(a, b, b.Instrs[i]); ok {
-			return d, true
+		in := b.Instrs[i]
+		if d, ok := storeInto(a, b, in); ok {
+			return d, true, false
+		}
+		if stop != nil && stop(in) {
+			return storeDef{}, false, true
 		}
 	}
-	return storeDef{}, false
+	return storeDef{}, false, false
 }
 
 // storeInto reports what in, an instruction of b, stores into a: the stored
@@ -69,11 +95,11 @@ func storeInto(a *ssa.Alloc, b *ssa.BasicBlock, in ssa.Instruction) (storeDef, b
 	switch in := in.(type) {
 	case *ssa.Store:
 		if in.Addr == a {
-			return storeDef{value: in.Val, block: b}, true
+			return storeDef{value: in.Val, block: b, instr: in}, true
 		}
 	case *ssa.Alloc:
 		if in == a {
-			return storeDef{value: storeZero(a), block: b}, true
+			return storeDef{value: storeZero(a), block: b, instr: in}, true
 		}
 	}
 	return storeDef{}, false

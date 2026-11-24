@@ -177,6 +177,8 @@ func (t *Tracer) followed(a *ssa.Alloc) bool {
 // into it.
 //
 // An address has no unary operation but a load, so any UnOp loads it.
+//
+//declscope:shared // escape.go finds the uses that let the address escape
 func tracerFollows(addr ssa.Value, refs *[]ssa.Instruction, onlyLoads bool) bool {
 	for _, r := range *refs {
 		switch r := r.(type) {

@@ -233,7 +233,7 @@ A zero `Result[T]` is one of:
 A use is reported: a return, an argument, a conversion to an interface, a store, a method call on it, a send, a map update. A conversion is reported where it is. An implicit conversion has no position of its own, so it is reported where the converted value is used. These are not uses:
 
 - a comparison;
-- the store that initializes a local variable, as in `r := mo.Result[int]{}` for a variable whose address is taken. The loads of that variable are judged instead;
+- the store that initializes a local variable, as in `r := mo.Result[int]{}` for a variable whose address is taken. The loads of that variable are judged instead. A store after the address escapes is judged as [After the address escapes](#after-the-address-escapes) says;
 - the store a `return` makes into its result variable. The return is judged instead, once.
 
 A comparison with the zero constant on the way stops a zero, as a nil check does. So `if r == (mo.Result[int]{}) { r = mo.Err[int](e) }; return r` is not reported.
@@ -241,6 +241,39 @@ A comparison with the zero constant on the way stops a zero, as a nil check does
 A zero `Result` written into a field or an element, as in `Holder{R: mo.Result[int]{}}`, is a store and is reported. A field left out of a composite literal, as in `Holder{}`, is not followed. exhaustruct makes it written, as for [`field-nil-store`](#field-nil-store).
 
 Message: `a zero mo.Result[T] is Ok with a zero value; build it with mo.Ok or mo.Err [result-zero]`.
+
+### After the address escapes
+
+A variable whose address escapes is not followed, as [Nil values](#nil-values) says: once the address is out, any code may write the variable. Its stores are judged instead. A zero `Result` stored into it after the address escaped is reported at the store, when the zero reaches a direct read of the variable with nothing on the way that may run other code. A direct read is a load of the variable itself, such as `return r`, `use(r)` or `c := r`.
+
+| On the way from the store to the read | Ends that path |
+| --- | --- |
+| A call or a method call, whether or not it takes `&r`. The pointer may be held elsewhere | Yes |
+| A builtin, except `append`, `cap`, `complex`, `copy`, `imag`, `len`, `max`, `min` and `real` | Yes |
+| A `go` or a `defer` statement | Yes |
+| The deferred calls at a return, in a function with a `defer` | Yes |
+| A channel send or receive, or a `select` | Yes |
+| A store through a pointer of the same type that may be `&r` | Yes |
+| Another store into `r` | Yes. It replaces the zero |
+| Any other instruction not listed below | Yes |
+| Arithmetic, a conversion, a field or element read of another value, a store into another variable, a map lookup or update, a branch | No |
+
+A path that ends brings nothing. The store is reported when some path from it reaches a read. The address has escaped when a use of it that stops the following, such as `&r` passed to a call or stored, may run before the store. A store before that is the initializing store, and it is not a use.
+
+| Code | Reported |
+| --- | --- |
+| `var r mo.Result[int]; sink(&r); r = mo.Result[int]{}; return r` | Yes, at the store |
+| `sink(&r); r = mo.Result[int]{}; x := 1; _ = x; return r` | Yes |
+| `r := mo.Result[int]{}; json.Unmarshal(data, &r)` | No. The store comes before the escape |
+| `for _, d := range ds { r = mo.Result[int]{}; json.Unmarshal(d, &r); use(r) }` | No. The call is on the way |
+| `holder.p = &r; r = mo.Result[int]{}; fill(); return r` | No. `fill` may write r through `holder.p` |
+| `r = mo.Result[int]{}; sink(&r)` | No |
+| `r = mo.Result[int]{}; holder.p = &r; return r` | No. The store comes before the escape |
+| `defer func() { r = mo.Ok(1) }(); r = mo.Result[int]{}; return r`, with r a named result | No. The deferred call runs before the result is read |
+
+A `return r` of a named result in a function with a `defer` stores the result back into r, runs the deferred calls, and loads r again. The first load only stores r into itself, so it is not a read.
+
+Two misses are accepted. A read through another pointer, as in `holder.p = &r; r = mo.Result[int]{}; return *holder.p`, is not a direct read. A callee that only reads the zero, through a pointer it holds, is not followed.
 
 ## `unwrap-nil`
 
@@ -328,6 +361,7 @@ molint -return-bool=false ./...               # every rule on by default, except
 | A nil that comes from outside the function, or from a field or a call | molint follows values only inside one function |
 | Branches whose conditions depend on each other, as in `if c { p = x }; if c { return p }` | Branches are taken as independent, so this is reported although no run returns nil. A nil check that can never succeed is reported too, as in `p := &T{}; if p == nil { return p }` |
 | A nil check, or a comparison with the zero `Result`, on a variable that SSA does not lift. `if p == nil { p = def }` on a captured `p`, or on a named result in a function with a `defer`, is one | A later load follows the stores that reach it. The check on an earlier load of the same variable is not carried over. A nil constant stored on an earlier path is then reported |
+| A zero `Result` stored after the variable's address escaped, and then read through another pointer, or by a callee that holds the pointer | Only a load of the variable itself is a direct read. Anything that may run other code ends the path. See [After the address escapes](#after-the-address-escapes) |
 | `mo.TupleToOption`, `mo.TupleToResult`, `mo.EmptyableToOption` | They check their arguments at run time |
 | A field left out of a composite literal, for `field-nil-store` and `result-zero` | SSA emits no store for it. exhaustruct makes it written |
 | A struct born zero outside a composite literal: `var s S`, `new(S)`, `make([]S, n)`, a map lookup that misses, or a decoder such as `json.Unmarshal` | Following each field until the struct is used needs definite assignment. molint gave that up with the non-nil contract. `field-nil-compare` still finds such a field where it is checked for nil |

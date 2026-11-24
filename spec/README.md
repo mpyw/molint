@@ -15,7 +15,7 @@ Confirming that the Go code follows the rules takes the fixtures under `testdata
 
 ## What is proved
 
-All six are `proved` under `--engine induction`.
+All seven are `proved` under `--engine induction`.
 
 | Spec | Rule | Claim |
 | --- | --- | --- |
@@ -25,6 +25,7 @@ All six are `proved` under `--engine induction`.
 | `pairing_load.fsl` | `return-nil` pairing a φ-node with a load of a followed variable | Reported exactly when some run returns the pair. The load is read, along each edge, as the stores reaching it on a path through that edge. The load may sit in a later block than the φ-node, past an `if` that may store into the variable |
 | `local_store.fsl` | Loads of a local that is not lifted | Reported exactly when some run loads the nil constant, for a variable no code can store into through its address. The Alloc counts as a store of nil. A literal that only loads the variable keeps it followed: the converse is stated over the run, so a rule that drops it breaks |
 | `result_zero.fsl` | `result-zero`, for a variable SSA lifts | Reported exactly when some run passes on a zero Result that is a constant's or passed a comparison. A comparison with the zero constant stops a zero at its own edge. An overwrite before the use kills it. A comparison is not a use: the run records which instructions pass the Result on, and the claim is stated over that record |
+| `result_zero_escape.fsl` | `result-zero`, for a zero stored after the variable's address escapes | The run goes step by step, and code that may run is free to write r once the address is out. When reported, the witness run reads the zero of a store made after the escape, with no code run on the way, whatever that code does. Every such read is reported. When the witness run passes code that may run, nothing is reported. Its negative controls are reachables in the same file: reporting every escaped zero store, stopping only at a call that takes `&r`, and requiring every arm clean each break one claim |
 
 Each also witnesses what it gives up: a nil (or zero) from outside that no check tests is not reported. That is nilaway's job.
 
@@ -63,12 +64,15 @@ The specs were checked by editing the rule by hand and re-running. Each edit bel
 | | The Alloc's zero forgotten; the loop not allowed zero rounds; arms always killing the entry | `ConstantNilIsReported` |
 | `result_zero.fsl` | A comparison not stopping; an overwrite not killing; `f()` counted as zero; a comparison counted as a use | `ReportMeansAZeroIsUsed` |
 | | `EqZero` not counted; the earlier φ-node not followed, or one edge of it only | `ZeroUseIsReported` |
+| `result_zero_escape.fsl` | A call, or a call that takes `&r`, not stopping; the later step ignored; the witness always the first arm | `ReportMeansAnUninterruptedRead`, `InterruptionMeansNoReport` |
+| | An overwrite not killing; the escape before the store not needed; the stored value not read | `ReportMeansAnUninterruptedRead` |
+| | Plain code, or `holder.p = &r`, stopping; every arm required clean | `UninterruptedReadIsReported` |
 
 One edit survives, and it is equivalent: in `nil_value.fsl`, letting a `NotNil` loop edge bring the constant nil. Such a check can never succeed, and ASSUME-2 leaves it out.
 
 ## What breaks, and why
 
-Each spec below models a rule that breaks a proved spec's claim. It states the negation of that claim as a `reachable`, so the rule is shown wrong by a witness run. `verify.sh` checks them by BMC to depth 8, and every witness must be reached. They leave out the proved spec's auxiliary invariants, so induction cannot prove them. There are two kinds.
+Each spec below models a rule that breaks a proved spec's claim. It states the negation of that claim as a `reachable`, so the rule is shown wrong by a witness run. `verify.sh` checks them by BMC to depth 8, and every witness must be reached. They leave out the proved spec's auxiliary invariants, so induction cannot prove them. There are two kinds. `result_zero_escape.fsl` keeps its negative controls in the same file instead: each wrong rule changes one `def` and its witness is a `def` too, so the reachable needs no run of its own.
 
 ### Naive: a rejected rule
 
@@ -129,5 +133,6 @@ The script reads each verdict from `fslc`'s JSON with Python, never from its exi
 | `pairing_load.fsl` | 82 | 74 | 90% |
 | `local_store.fsl` | 141 | 123 | 87% |
 | `result_zero.fsl` | 155 | 128 | 82% |
+| `result_zero_escape.fsl` | 131 | 116 | 89% |
 
-Most survivors change which free choice bit picks an operand, or the bounds of the bit index. Both leave the set of programs the same. The rest touch state the run writes before it reads, the `abort` action of a run whose checks all fail, or a ghost that only the auxiliary invariants read.
+Most survivors change which free choice bit picks an operand, or the bounds of the bit index. Both leave the set of programs the same. The rest touch state the run writes before it reads, the `abort` action of a run whose checks all fail, or a ghost that only the auxiliary invariants read. In `result_zero_escape.fsl`, a read of the store's zero is also told by `fromStore`, so a run that drops a step's write of `rValue`, or of `addressOut` after the store, survives too.

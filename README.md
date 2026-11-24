@@ -692,7 +692,7 @@ func Load() mo.Result[Config] {
 }
 ```
 
-A return, an argument, a store, a send, and a method call are uses. A comparison is not. A zero [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) is None, which is fine, so it is not reported.
+A return, an argument, a store, a send, and a method call are uses. A comparison is not. Once `&r` is passed or stored elsewhere, r is not followed. A zero stored into r after that is reported at the store when a later read of r sees it with no call, `go`, `defer`, channel operation or `select` on the way. So `r := mo.Result[T]{}; json.Unmarshal(data, &r)` is not reported. A zero [`mo.Option`](https://pkg.go.dev/github.com/samber/mo#Option) is None, which is fine, so it is not reported.
 
 #### Fix
 

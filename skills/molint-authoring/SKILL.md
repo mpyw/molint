@@ -156,6 +156,8 @@ return r
 
 Build every `Result` with `mo.Ok`, `mo.Err`, `mo.Errf` or `mo.Try`. A zero `mo.Option` is `None`, which is fine.
 
+Resetting a `Result` for a decoder, as in `r := mo.Result[T]{}; json.Unmarshal(data, &r)`, is not reported. A zero stored after `&r` was passed or stored elsewhere is reported when r is then read with no call, `go`, `defer`, channel operation or `select` in between.
+
 A struct field of type `mo.Result` that a composite literal leaves out is a zero `Result` too. molint does not see it. exhaustruct does.
 
 ### `unwrap-nil`

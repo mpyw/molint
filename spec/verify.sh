@@ -41,7 +41,7 @@ print(v if isinstance(v, str) else "none")
 }
 
 ## These must verify, and must be inductive rather than true only to a depth.
-proving=(nil_value pairing pairing_stores pairing_load local_store result_zero)
+proving=(nil_value pairing pairing_stores pairing_load local_store result_zero result_zero_escape)
 
 ## These verify by BMC to a depth. Each holds a reachable witness that is
 ## the negation of a proved spec's claim. A naive spec models a rule that

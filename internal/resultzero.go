@@ -3,6 +3,7 @@ package internal
 import (
 	"fmt"
 	"go/token"
+	"slices"
 
 	"golang.org/x/tools/go/ssa"
 
@@ -17,7 +18,9 @@ import (
 // variable of the same function, whose loads are judged instead, nor the
 // store a return makes into its result variable, since the return is judged
 // once. A function literal that stores into a variable it captures makes a
-// use: the loads of that variable are no longer followed.
+// use: the loads of that variable are no longer followed. A store into a
+// variable whose address escaped before it is a use when a load of the
+// variable reads it with nothing on the way that may run other code.
 //
 //declscope:shared // run.go calls it
 func (c *checker) checkResultZero(fn *ssa.Function) {
@@ -26,6 +29,18 @@ func (c *checker) checkResultZero(fn *ssa.Function) {
 		if m, _ := typeutil.MoOf(v.Type()); m == typeutil.Result && zeros.Is(v, at) {
 			c.report(pos, rule.ResultZero, fmt.Sprintf("a zero %s is Ok with a zero value; build it with mo.Ok or mo.Err", typeutil.TypeString(v.Type(), c.pass.Pkg)))
 		}
+	}
+	escaped := make(map[*ssa.Alloc][]*ssa.Store)
+	readAfterEscape := func(a *ssa.Alloc, st *ssa.Store) bool {
+		if m, _ := typeutil.MoOf(st.Val.Type()); m != typeutil.Result {
+			return false
+		}
+		read, ok := escaped[a]
+		if !ok {
+			read = flow.EscapedStoresRead(a)
+			escaped[a] = read
+		}
+		return slices.Contains(read, st)
 	}
 	rets := flow.Returns(fn)
 	if flow.IsRangeBody(fn) {
@@ -45,8 +60,11 @@ func (c *checker) checkResultZero(fn *ssa.Function) {
 					check(a, in.Pos(), at)
 				}
 			case *ssa.Store:
-				switch in.Addr.(type) {
+				switch a := in.Addr.(type) {
 				case *ssa.Alloc:
+					if readAfterEscape(a, in) {
+						check(in.Val, in.Pos(), at)
+					}
 				case *ssa.FreeVar:
 					if !flow.IsRangeReturnStore(in) {
 						check(in.Val, in.Pos(), at)
