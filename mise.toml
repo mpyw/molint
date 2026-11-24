@@ -7,7 +7,7 @@ min_version = "2026.11.0"
 [tools]
 go = "1.27.0"
 golangci-lint = "2.13.1"
-"github:mpyw/declscope" = "0.25.0"
+"github:mpyw/declscope" = "0.26.0"
 # fslc is the FSL verifier for spec/. The packslip backend checks the release
 # signature and digest, and also fetches the fsl-* agent skills of this version.
 "packslip:github.com/ymm-oss/fsl/fslc" = "5.1.0"
