@@ -47,10 +47,6 @@
 //                              whenever a run returns such a nil, r is
 //                              reported. A nil check on the way is judged at
 //                              its own edge, so it cannot hide one.
-//   CheckedEdgeIsReported      whenever a run returns through an edge under
-//                              IsNil, r is reported. edgeBringsNil counts
-//                              every IsNil edge, so this one holds by
-//                              construction.
 //
 // A nil from outside that no check tests is not reported. The rules leave
 // that to nilaway. ExtNilIsNotReported witnesses it.
@@ -413,9 +409,6 @@ spec NilValue {
   }
   invariant CheckedOrConstantNilIsReported {
     (phase == Returned and reportableNil(returnedValue)) => reported()
-  }
-  invariant CheckedEdgeIsReported {
-    (phase == Returned and joinCheck[takenEdge] == IsNil) => reported()
   }
 
   // --- auxiliary: what makes them inductive ---------------------------------------
