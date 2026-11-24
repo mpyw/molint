@@ -10,7 +10,7 @@ golangci-lint = "2.13.1"
 "github:mpyw/declscope" = "0.26.0"
 # fslc is the FSL verifier for spec/. The packslip backend checks the release
 # signature and digest, and also fetches the fsl-* agent skills of this version.
-"packslip:github.com/ymm-oss/fsl/fslc" = "5.1.0"
+"packslip:github.com/ymm-oss/fsl/fslc" = "5.3.0"
 
 [settings.skills]
 # After mise installs a new fslc version, link that version's fsl-* skills into
