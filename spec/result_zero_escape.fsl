@@ -85,12 +85,10 @@ spec ResultZeroEscape {
   enum Value { Zero, Built }
   enum Phase { Ready, Escaped, Stored, Armed, Later, Read }
   type Arm = 0..1
-  type ChoiceBit = 0..11
 
   state {
     phase: Phase,
-    choice: Map<ChoiceBit, Bool>,
-    // the program
+    // the program. init leaves it unset, so it can be any program.
     escapeBefore: Escape,
     storesZero: Bool,
     armStep: Map<Arm, Step>,
@@ -108,18 +106,6 @@ spec ResultZeroEscape {
     readValue: Value
   }
 
-  def pickEscape(bit: ChoiceBit) =
-    if choice[bit] then NoEscape
-    else if choice[bit + 1] then EscapeStoresAddr
-    else EscapePassesAddr
-  def pickStep(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then Plain
-      else Call
-    else if choice[bit + 1] then Overwrite
-    else if choice[bit + 2] then StoresAddr
-    else PassesAddr
-
   // --- the rule -------------------------------------------------------------------
 
   def escapedBefore() = escapeBefore != NoEscape
@@ -130,11 +116,7 @@ spec ResultZeroEscape {
 
   init {
     phase = Ready
-    escapeBefore = pickEscape(0)
-    storesZero = choice[2]
-    forall arm: Arm { armStep[arm] = pickStep(3 + 3 * arm) }
-    laterStep = pickStep(9)
-    // The verdict and the witness read only the program set above.
+    // The verdict and the witness read only the program.
     verdict = reported()
     witnessArm = chooseWitnessArm()
     addressOut = false

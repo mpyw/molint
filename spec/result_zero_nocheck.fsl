@@ -19,6 +19,10 @@
 // edge that blocks the witness is a live one. The run is limited to
 // programs that result_zero.fsl's rule does not report. So every report
 // here is this rule's own.
+//
+// ASSUME-5 (representation only), as in result_zero.fsl: each edge of P
+//   stores a value. An edge of P that kept r would keep the zero of
+//   `var r`, which is the same program as one that stores Zero.
 fsl 5
 spec ResultZeroNoCheck {
   // KeepsR: the arm, or W, leaves r as it was. Zero is the zero Result.
@@ -30,12 +34,10 @@ spec ResultZeroNoCheck {
   enum Phase { Ready, PastEarlierJoin, Joined, Done, Aborted }
   type Edge = 0..2
   type EarlierEdge = 0..1
-  type ChoiceBit = 0..20
 
   state {
     phase: Phase,
-    choice: Map<ChoiceBit, Bool>,
-    // the program
+    // the program. init leaves it unset, so it can be any program.
     earlierOperand: Map<EarlierEdge, Operand>,
     armOperand: Map<Edge, Operand>,
     armComparison: Map<Edge, Comparison>,
@@ -54,31 +56,6 @@ spec ResultZeroNoCheck {
     takenEdge: Edge,
     onWitness: Bool
   }
-
-  def pickEarlierOperand(bit: ChoiceBit) =
-    if choice[bit] then Zero
-    else if choice[bit + 1] then Built
-    else Outside
-  def pickOperand(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then KeepsR
-      else Zero
-    else
-      if choice[bit + 1] then Built
-      else Outside
-  def pickComparison(bit: ChoiceBit) =
-    if choice[bit] then NoComparison
-    else if choice[bit + 1] then EqZero
-    else NeZero
-  def pickInstruction(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then Return
-      else if choice[bit + 2] then Argument
-      else ToInterface
-    else if choice[bit + 1] then
-      if choice[bit + 2] then FieldStore
-      else MethodCall
-    else Compare
 
   // --- the rule -------------------------------------------------------------------
 
@@ -118,6 +95,12 @@ spec ResultZeroNoCheck {
     (armComparison[edge] == EqZero => mayBeZeroOnEdge(edge))
     and (armComparison[edge] == NeZero => mayBeNonZeroOnEdge(edge))
   def everyComparisonCanPass() = forall edge: Edge { comparisonCanPass(edge) }
+
+  // --- ASSUME-5 -------------------------------------------------------------------
+
+  def everyEarlierEdgeStores() =
+    forall earlierEdge: EarlierEdge { earlierOperand[earlierEdge] != KeepsR }
+  def programRuns() = everyEarlierEdgeStores() and everyComparisonCanPass()
 
   // --- the witness ----------------------------------------------------------------
 
@@ -166,16 +149,7 @@ spec ResultZeroNoCheck {
 
   init {
     phase = Ready
-    forall earlierEdge: EarlierEdge {
-      earlierOperand[earlierEdge] = pickEarlierOperand(2 * earlierEdge)
-    }
-    forall edge: Edge {
-      armOperand[edge] = pickOperand(4 + 2 * edge)
-      armComparison[edge] = pickComparison(10 + 2 * edge)
-    }
-    overwrite = pickOperand(16)
-    instruction = pickInstruction(18)
-    // The verdict and the witness read only the program set above.
+    // The verdict and the witness read only the program.
     verdict = reported()
     witnessEdge = chooseWitnessEdge()
     witnessOutsideZero = chooseWitnessOutsideZero(chooseWitnessEdge())
@@ -193,7 +167,7 @@ spec ResultZeroNoCheck {
 
   action earlierJoin(earlierEdge: EarlierEdge, outsideZero: Bool) {
     requires phase == Ready
-    requires everyComparisonCanPass()
+    requires programRuns()
     requires not provedReported()
     phase = PastEarlierJoin
     earlierValue = operandValue(earlierOperand[earlierEdge], NonZero, outsideZero)
@@ -236,7 +210,7 @@ spec ResultZeroNoCheck {
   terminal {
     phase == Done
     or phase == Aborted
-    or (phase == Ready and not everyComparisonCanPass())
+    or (phase == Ready and not programRuns())
   }
 
   // --- what holds, and the claim that breaks --------------------------------------
