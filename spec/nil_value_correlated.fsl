@@ -29,12 +29,11 @@ spec NilValueCorrelated {
   enum Operand { Nil, NonNilLiteral, Outside }
   enum Value { NilConstant, NilOutside, NonNil }
   enum Phase { Ready, Joined, Returned }
-  type ChoiceBit = 0..4
 
   state {
     phase: Phase,
-    choice: Map<ChoiceBit, Bool>,
-    // the program: P0, P1, and whether the second test is c again
+    // the program: P0, P1, and whether the second test is c again. init
+    // leaves it unset, so it can be any program.
     entryOperand: Operand,
     thenOperand: Operand,
     sameCondition: Bool,
@@ -49,16 +48,8 @@ spec NilValueCorrelated {
     onWitness: Bool
   }
 
-  def pickOperand(bit: ChoiceBit) =
-    if choice[bit] then Nil
-    else if choice[bit + 1] then NonNilLiteral
-    else Outside
-
   init {
     phase = Ready
-    entryOperand = pickOperand(0)
-    thenOperand = pickOperand(2)
-    sameCondition = choice[4]
     verdict = reported()
     witnessCondition = entryOperand != Nil
     firstCondition = false
