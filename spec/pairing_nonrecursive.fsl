@@ -38,12 +38,10 @@ spec PairingNonRecursive {
   // An arm, or 2 for no arm.
   type ArmOrNone = 0..2
   type Rounds = 0..2
-  type ChoiceBit = 0..29
 
   state {
     phase: Phase,
-    choice: Map<ChoiceBit, Bool>,
-    // the program
+    // the program. init leaves it unset, so it can be any program.
     entryPointer: PointerOperand,
     entrySecond: SecondOperand,
     armPointer: Map<Arm, PointerOperand>,
@@ -70,47 +68,6 @@ spec PairingNonRecursive {
     returnedSecond: SecondValue,
     onWitness: Bool
   }
-
-  def pickEntryPointer(bit: ChoiceBit) =
-    if choice[bit] then Nil
-    else if choice[bit + 1] then NonNilLiteral
-    else Outside
-  def pickEntrySecond(bit: ChoiceBit) =
-    if choice[bit] then Bad
-    else if choice[bit + 1] then Good
-    else SecondOutside
-  def pickArmPointer(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then KeepsPointer
-      else Nil
-    else
-      if choice[bit + 1] then NonNilLiteral
-      else Outside
-  def pickArmSecond(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then KeepsSecond
-      else Bad
-    else
-      if choice[bit + 1] then Good
-      else SecondOutside
-  def pickJoinPointer(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then Nil
-      else NonNilLiteral
-    else
-      if choice[bit + 1] then Outside
-      else PointerFromLoop
-  def pickJoinSecond(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then Bad
-      else Good
-    else
-      if choice[bit + 1] then SecondOutside
-      else SecondFromLoop
-  def pickCheck(bit: ChoiceBit) =
-    if choice[bit] then NoCheck
-    else if choice[bit + 1] then IsNil
-    else NotNil
 
   // --- the rule -------------------------------------------------------------------
 
@@ -192,20 +149,22 @@ spec PairingNonRecursive {
       else pointerMayBeNonNil(joinPointer[edge])))
   def everyCheckCanPass() = forall edge: Edge { checkCanPass(edge) }
 
+  // --- ASSUME-5 of pairing.fsl ---------------------------------------------------
+
+  // The entry stores a value. An arm keeps a result with Keeps, and an edge
+  // of J reads what the loop left with FromLoop.
+  def operandsInPlace() =
+    entryPointer != KeepsPointer
+    and entryPointer != PointerFromLoop
+    and entrySecond != KeepsSecond
+    and entrySecond != SecondFromLoop
+    and (forall arm: Arm { armPointer[arm] != PointerFromLoop and armSecond[arm] != SecondFromLoop })
+    and (forall edge: Edge { joinPointer[edge] != KeepsPointer and joinSecond[edge] != KeepsSecond })
+  def programRuns() = operandsInPlace() and everyCheckCanPass()
+
   init {
     phase = Ready
-    entryPointer = pickEntryPointer(0)
-    entrySecond = pickEntrySecond(2)
-    forall arm: Arm {
-      armPointer[arm] = pickArmPointer(4 + 4 * arm)
-      armSecond[arm] = pickArmSecond(6 + 4 * arm)
-    }
-    forall edge: Edge {
-      joinPointer[edge] = pickJoinPointer(12 + 6 * edge)
-      joinSecond[edge] = pickJoinSecond(14 + 6 * edge)
-      joinCheck[edge] = pickCheck(16 + 6 * edge)
-    }
-    // The verdict and the witness read only the program set above.
+    // The verdict and the witness read only the program.
     verdict = reported()
     witnessEdge = firstEdge()
     witnessFirstArm = firstArmOfPath(firstEdge())
@@ -250,7 +209,7 @@ spec PairingNonRecursive {
 
   action enter(outsideNil: Bool, outsideBad: Bool) {
     requires phase == Ready
-    requires everyCheckCanPass()
+    requires programRuns()
     requires not provedReported()
     phase = InLoop
     loopPointer = pointerValue(entryPointer, outsideNil, NonNil)
@@ -312,7 +271,7 @@ spec PairingNonRecursive {
   terminal {
     phase == Returned
     or phase == Aborted
-    or (phase == Ready and not everyCheckCanPass())
+    or (phase == Ready and not programRuns())
   }
 
   // --- what holds, and the claim that breaks --------------------------------------

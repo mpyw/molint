@@ -79,6 +79,9 @@
 //   outside, or x and e. Nil checks on the way are the subject of
 //   nil_value.fsl and pairing.fsl. On a loaded variable they are a gap
 //   (local_store.fsl ASSUME-3).
+// ASSUME-4 (representation only): each edge of P stores a constant or a
+//   value from outside into x and into e. Only the store after the loop
+//   stores x or e. The other programs are outside the program above.
 fsl 5
 spec PairingStores {
   // NoPointerStore and NoErrorStore: no store of that result. At the entry
@@ -92,12 +95,10 @@ spec PairingStores {
   type Arm = 0..1
   type EarlierEdge = 0..1
   type Rounds = 0..2
-  type ChoiceBit = 0..28
 
   state {
     phase: Phase,
-    choice: Map<ChoiceBit, Bool>,
-    // the program
+    // the program. init leaves it unset, so it can be any program.
     earlierX: Map<EarlierEdge, PointerStore>,
     earlierE: Map<EarlierEdge, ErrorStore>,
     entryPointer: PointerStore,
@@ -130,33 +131,6 @@ spec PairingStores {
     errorIsBad: Bool,
     onWitness: Bool
   }
-
-  def pickPointerStore(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then NoPointerStore
-      else PointerNil
-    else
-      if choice[bit + 1] then PointerNonNil
-      else PointerOutside
-  def pickErrorStore(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then NoErrorStore
-      else ErrorBad
-    else
-      if choice[bit + 1] then ErrorGood
-      else ErrorOutside
-  def pickEarlierPointer(bit: ChoiceBit) =
-    if choice[bit] then PointerNil
-    else if choice[bit + 1] then PointerNonNil
-    else PointerOutside
-  def pickEarlierError(bit: ChoiceBit) =
-    if choice[bit] then ErrorBad
-    else if choice[bit + 1] then ErrorGood
-    else ErrorOutside
-  def pickAfterPointer(bit: ChoiceBit) =
-    if choice[bit] then pickPointerStore(bit + 1) else PointerFromX
-  def pickAfterError(bit: ChoiceBit) =
-    if choice[bit] then pickErrorStore(bit + 1) else ErrorFromE
 
   // --- the rule -------------------------------------------------------------------
 
@@ -208,24 +182,22 @@ spec PairingStores {
   def pathLength(first: ArmOrNone, later: ArmOrNone) =
     (if first != 2 then 1 else 0) + (if later != 2 then 1 else 0)
 
+  // --- ASSUME-4 -------------------------------------------------------------------
+
+  def programRuns() =
+    (forall edge: EarlierEdge {
+      earlierX[edge] != NoPointerStore
+      and earlierX[edge] != PointerFromX
+      and earlierE[edge] != NoErrorStore
+      and earlierE[edge] != ErrorFromE
+    })
+    and entryPointer != PointerFromX
+    and entryError != ErrorFromE
+    and (forall arm: Arm { armPointer[arm] != PointerFromX and armError[arm] != ErrorFromE })
+
   init {
     phase = Ready
-    forall edge: EarlierEdge {
-      earlierX[edge] = pickEarlierPointer(4 * edge)
-      earlierE[edge] = pickEarlierError(4 * edge + 2)
-    }
-    entryPointer = pickPointerStore(8)
-    entryError = pickErrorStore(10)
-    forall arm: Arm {
-      armPointer[arm] = pickPointerStore(12 + 4 * arm)
-      armError[arm] = pickErrorStore(14 + 4 * arm)
-    }
-    afterPointer = pickAfterPointer(20)
-    afterError = pickAfterError(23)
-    looped = choice[26]
-    trailingBool = choice[27]
-    errorLoadedEarly = choice[28]
-    // The verdict and the witness read only the program set above.
+    // The verdict and the witness read only the program.
     verdict = reported()
     witnessFirstArm = firstArmOfPath()
     witnessLaterArm = laterArmOfPath(firstArmOfPath())
@@ -258,6 +230,7 @@ spec PairingStores {
 
   action passEarlierIf(edge: EarlierEdge, outsideNil: Bool) {
     requires phase == Ready
+    requires programRuns()
     phase = Joined
     earlierEdgeTaken = edge
     xIsNil = earlierX[edge] == PointerNil
@@ -320,7 +293,7 @@ spec PairingStores {
     onWitness = onWitness and not outsideNil
   }
 
-  terminal { phase == Returned }
+  terminal { phase == Returned or (phase == Ready and not programRuns()) }
 
   // --- what is proved -------------------------------------------------------------
 
@@ -356,17 +329,7 @@ spec PairingStores {
     else if pointerStoredLater then pointerArm
     else errorArm
 
-  invariant ProgramShape {
-    (forall edge: EarlierEdge {
-      earlierX[edge] != NoPointerStore
-      and earlierX[edge] != PointerFromX
-      and earlierE[edge] != NoErrorStore
-      and earlierE[edge] != ErrorFromE
-    })
-    and entryPointer != PointerFromX
-    and entryError != ErrorFromE
-    and (forall arm: Arm { armPointer[arm] != PointerFromX and armError[arm] != ErrorFromE })
-  }
+  invariant ProgramShape { phase != Ready => programRuns() }
   invariant VerdictFixed {
     verdict == reported()
     and witnessFirstArm == firstArmOfPath()
