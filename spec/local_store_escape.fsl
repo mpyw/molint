@@ -32,12 +32,10 @@ spec LocalStoreEscape {
   enum Phase { Ready, Judged, InLoop, LeftLoop, Loaded }
   type Arm = 0..2
   type Rounds = 0..2
-  type ChoiceBit = 0..15
 
   state {
     phase: Phase,
-    choice: Map<ChoiceBit, Bool>,
-    // the program
+    // the program. init leaves it unset, so it can be any program.
     entryStore: Store,
     armStore: Map<Arm, Store>,
     looped: Bool,
@@ -56,34 +54,8 @@ spec LocalStoreEscape {
     onWitness: Bool
   }
 
-  def pickStore(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then NoStore
-      else StoresNil
-    else
-      if choice[bit + 1] then StoresNonNil
-      else StoresOutside
-  def pickEscape(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then NoEscape
-      else LoadsOnly
-    else
-      if choice[bit + 1] then StoresInto
-      else AddrPassed
-  def pickEffect(bit: ChoiceBit) =
-    if choice[bit] then Keeps
-    else if choice[bit + 1] then SetsNonNil
-    else SetsOutside
-
   init {
     phase = Ready
-    entryStore = pickStore(0)
-    forall armIndex: Arm { armStore[armIndex] = pickStore(2 + 2 * armIndex) }
-    looped = choice[8]
-    escape = pickEscape(9)
-    escapeEffect = pickEffect(11)
-    escapeDeferred = choice[13]
-    laterStore = pickStore(14)
     verdict = false
     witnessArm = 0
     witnessRounds = 0
