@@ -26,12 +26,11 @@ spec ReturnStoreDeferred {
   enum Effect { Keeps, SetsNonNil, SetsOutside }
   enum Value { NilConstant, NilOutside, NonNil }
   enum Phase { Ready, Judged, Stored, Returned }
-  type ChoiceBit = 0..3
 
   state {
     phase: Phase,
-    choice: Map<ChoiceBit, Bool>,
-    // the program: V, and what the deferred literal does to p
+    // the program: V, and what the deferred literal does to p. init leaves
+    // it unset, so it can be any program.
     returnOperand: Operand,
     deferredEffect: Effect,
     // the verdict
@@ -44,14 +43,6 @@ spec ReturnStoreDeferred {
 
   init {
     phase = Ready
-    returnOperand =
-      if choice[0] then Nil
-      else if choice[1] then NonNilLiteral
-      else Outside
-    deferredEffect =
-      if choice[2] then Keeps
-      else if choice[3] then SetsNonNil
-      else SetsOutside
     verdict = false
     pValue = NonNil
     returnedValue = NonNil
