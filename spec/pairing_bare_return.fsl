@@ -16,6 +16,11 @@
 // except for reported and the witness. The witness takes the path that
 // gives the error. The run is limited to programs that pairing_stores.fsl's
 // rule does not report. So every report here is this rule's own.
+//
+// ASSUME-1 to ASSUME-3 are those of pairing_stores.fsl.
+// ASSUME-4 (representation only): each edge of P stores a constant or a
+//   value from outside into x and into e. Only the store after the loop
+//   stores x or e. The other programs are outside the program above.
 fsl 5
 spec PairingBareReturn {
   // NoPointerStore and NoErrorStore: no store of that result. At the entry
@@ -29,12 +34,10 @@ spec PairingBareReturn {
   type Arm = 0..1
   type EarlierEdge = 0..1
   type Rounds = 0..2
-  type ChoiceBit = 0..27
 
   state {
     phase: Phase,
-    choice: Map<ChoiceBit, Bool>,
-    // the program
+    // the program. init leaves it unset, so it can be any program.
     earlierX: Map<EarlierEdge, PointerStore>,
     earlierE: Map<EarlierEdge, ErrorStore>,
     entryPointer: PointerStore,
@@ -66,33 +69,6 @@ spec PairingBareReturn {
     errorIsBad: Bool,
     onWitness: Bool
   }
-
-  def pickPointerStore(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then NoPointerStore
-      else PointerNil
-    else
-      if choice[bit + 1] then PointerNonNil
-      else PointerOutside
-  def pickErrorStore(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then NoErrorStore
-      else ErrorBad
-    else
-      if choice[bit + 1] then ErrorGood
-      else ErrorOutside
-  def pickEarlierPointer(bit: ChoiceBit) =
-    if choice[bit] then PointerNil
-    else if choice[bit + 1] then PointerNonNil
-    else PointerOutside
-  def pickEarlierError(bit: ChoiceBit) =
-    if choice[bit] then ErrorBad
-    else if choice[bit + 1] then ErrorGood
-    else ErrorOutside
-  def pickAfterPointer(bit: ChoiceBit) =
-    if choice[bit] then pickPointerStore(bit + 1) else PointerFromX
-  def pickAfterError(bit: ChoiceBit) =
-    if choice[bit] then pickErrorStore(bit + 1) else ErrorFromE
 
   // --- the rule -------------------------------------------------------------------
 
@@ -160,23 +136,22 @@ spec PairingBareReturn {
   def pathLength(first: ArmOrNone, later: ArmOrNone) =
     (if first != 2 then 1 else 0) + (if later != 2 then 1 else 0)
 
+  // --- ASSUME-4 -------------------------------------------------------------------
+
+  def earlierEdgeStores(edge: EarlierEdge) =
+    earlierX[edge] != NoPointerStore
+    and earlierX[edge] != PointerFromX
+    and earlierE[edge] != NoErrorStore
+    and earlierE[edge] != ErrorFromE
+  def loopStoresNoPhi() =
+    entryPointer != PointerFromX
+    and entryError != ErrorFromE
+    and (forall arm: Arm { armPointer[arm] != PointerFromX and armError[arm] != ErrorFromE })
+  def programRuns() = (forall edge: EarlierEdge { earlierEdgeStores(edge) }) and loopStoresNoPhi()
+
   init {
     phase = Ready
-    forall edge: EarlierEdge {
-      earlierX[edge] = pickEarlierPointer(4 * edge)
-      earlierE[edge] = pickEarlierError(4 * edge + 2)
-    }
-    entryPointer = pickPointerStore(8)
-    entryError = pickErrorStore(10)
-    forall arm: Arm {
-      armPointer[arm] = pickPointerStore(12 + 4 * arm)
-      armError[arm] = pickErrorStore(14 + 4 * arm)
-    }
-    afterPointer = pickAfterPointer(20)
-    afterError = pickAfterError(23)
-    looped = choice[26]
-    trailingBool = choice[27]
-    // The verdict and the witness read only the program set above.
+    // The verdict and the witness read only the program.
     verdict = reported()
     witnessFirstArm = firstArmOfPath()
     witnessLaterArm = laterArmOfPath(firstArmOfPath())
@@ -209,6 +184,7 @@ spec PairingBareReturn {
 
   action passEarlierIf(edge: EarlierEdge, outsideNil: Bool) {
     requires phase == Ready
+    requires programRuns()
     requires not provedReported()
     phase = Joined
     earlierEdgeTaken = edge
@@ -268,7 +244,7 @@ spec PairingBareReturn {
     onWitness = onWitness and not outsideNil
   }
 
-  terminal { phase == Returned }
+  terminal { phase == Returned or (phase == Ready and not programRuns()) }
 
   // --- what holds, and the claim that breaks --------------------------------------
 
