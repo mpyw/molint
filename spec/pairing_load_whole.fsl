@@ -24,12 +24,10 @@ spec PairingLoadWhole {
   enum Phase { Ready, PastEarlierIf, PastSwitch, Returned }
   type Edge = 0..2
   type EarlierEdge = 0..1
-  type ChoiceBit = 0..18
 
   state {
     phase: Phase,
-    choice: Map<ChoiceBit, Bool>,
-    // the program
+    // the program. init leaves it unset, so it can be any program.
     earlierStore: Map<EarlierEdge, ErrorStore>,
     armPointer: Map<Edge, PointerOperand>,
     armError: Map<Edge, ErrorStore>,
@@ -51,18 +49,6 @@ spec PairingLoadWhole {
     takenEdge: Edge,
     laterTaken: Bool
   }
-
-  def pickPointer(bit: ChoiceBit) =
-    if choice[bit] then Nil
-    else if choice[bit + 1] then NonNilLiteral
-    else Outside
-  def pickErrorStore(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then NoErrorStore
-      else ErrorBad
-    else
-      if choice[bit + 1] then ErrorGood
-      else ErrorOutside
 
   // --- the rule -------------------------------------------------------------------
 
@@ -99,15 +85,7 @@ spec PairingLoadWhole {
 
   init {
     phase = Ready
-    forall earlierEdge: EarlierEdge {
-      earlierStore[earlierEdge] = pickErrorStore(2 * earlierEdge)
-    }
-    forall edge: Edge {
-      armPointer[edge] = pickPointer(4 + 4 * edge)
-      armError[edge] = pickErrorStore(6 + 4 * edge)
-    }
-    hasLaterIf = choice[16]
-    laterStore = pickErrorStore(17)
+    // The verdict and the witness read only the program.
     verdict = reported()
     witnessEdge = firstEdge()
     witnessEarlierEdge = firstEarlierEdge()
