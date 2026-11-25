@@ -54,8 +54,8 @@
 //   NilWithBadIsReported    whenever a run returns such a pair, it is
 //                           reported
 //
-// init chooses the program from free choice bits. It also fixes the verdict
-// and the witness, which read only the program.
+// init leaves the program unset, so it can be any program. It fixes the
+// verdict and the witness, which read only the program.
 //
 // ASSUME-1: branches are taken as independent, as the rule defines. The gap
 //   when they correlate is nil_value_correlated.fsl.
@@ -67,6 +67,11 @@
 // ASSUME-4 (representation only): two arms in the loop and three edges into
 //   J. The loop gives the recursion into an earlier block. It also gives a
 //   pair whose two values come from different rounds.
+// ASSUME-5 (representation only): KeepsPointer and PointerFromLoop both
+//   name what u held, and the same for s. An arm keeps it with Keeps, and
+//   an edge of J reads it with FromLoop. The entry has nothing earlier to
+//   keep, so it stores a value. A program with the other name in those
+//   places is the same program, or has no meaning.
 fsl 5
 spec Pairing {
   // KeepsPointer and KeepsSecond: the arm leaves that result as it was.
@@ -83,12 +88,10 @@ spec Pairing {
   // An arm, or 2 for no arm.
   type ArmOrNone = 0..2
   type Rounds = 0..2
-  type ChoiceBit = 0..29
 
   state {
     phase: Phase,
-    choice: Map<ChoiceBit, Bool>,
-    // the program
+    // the program. init leaves it unset, so it can be any program.
     entryPointer: PointerOperand,
     entrySecond: SecondOperand,
     armPointer: Map<Arm, PointerOperand>,
@@ -115,47 +118,6 @@ spec Pairing {
     returnedSecond: SecondValue,
     onWitness: Bool
   }
-
-  def pickEntryPointer(bit: ChoiceBit) =
-    if choice[bit] then Nil
-    else if choice[bit + 1] then NonNilLiteral
-    else Outside
-  def pickEntrySecond(bit: ChoiceBit) =
-    if choice[bit] then Bad
-    else if choice[bit + 1] then Good
-    else SecondOutside
-  def pickArmPointer(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then KeepsPointer
-      else Nil
-    else
-      if choice[bit + 1] then NonNilLiteral
-      else Outside
-  def pickArmSecond(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then KeepsSecond
-      else Bad
-    else
-      if choice[bit + 1] then Good
-      else SecondOutside
-  def pickJoinPointer(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then Nil
-      else NonNilLiteral
-    else
-      if choice[bit + 1] then Outside
-      else PointerFromLoop
-  def pickJoinSecond(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then Bad
-      else Good
-    else
-      if choice[bit + 1] then SecondOutside
-      else SecondFromLoop
-  def pickCheck(bit: ChoiceBit) =
-    if choice[bit] then NoCheck
-    else if choice[bit + 1] then IsNil
-    else NotNil
 
   // --- the rule -------------------------------------------------------------------
 
@@ -221,20 +183,22 @@ spec Pairing {
       else pointerMayBeNonNil(joinPointer[edge])))
   def everyCheckCanPass() = forall edge: Edge { checkCanPass(edge) }
 
+  // --- ASSUME-5 -------------------------------------------------------------------
+
+  // The entry stores a value. An arm keeps a result with Keeps, and an edge
+  // of J reads what the loop left with FromLoop.
+  def operandsInPlace() =
+    entryPointer != KeepsPointer
+    and entryPointer != PointerFromLoop
+    and entrySecond != KeepsSecond
+    and entrySecond != SecondFromLoop
+    and (forall arm: Arm { armPointer[arm] != PointerFromLoop and armSecond[arm] != SecondFromLoop })
+    and (forall edge: Edge { joinPointer[edge] != KeepsPointer and joinSecond[edge] != KeepsSecond })
+  def programRuns() = operandsInPlace() and everyCheckCanPass()
+
   init {
     phase = Ready
-    entryPointer = pickEntryPointer(0)
-    entrySecond = pickEntrySecond(2)
-    forall arm: Arm {
-      armPointer[arm] = pickArmPointer(4 + 4 * arm)
-      armSecond[arm] = pickArmSecond(6 + 4 * arm)
-    }
-    forall edge: Edge {
-      joinPointer[edge] = pickJoinPointer(12 + 6 * edge)
-      joinSecond[edge] = pickJoinSecond(14 + 6 * edge)
-      joinCheck[edge] = pickCheck(16 + 6 * edge)
-    }
-    // The verdict and the witness read only the program set above.
+    // The verdict and the witness read only the program.
     verdict = reported()
     witnessEdge = firstEdge()
     witnessFirstArm = firstArmOfPath(firstEdge())
@@ -279,7 +243,7 @@ spec Pairing {
 
   action enter(outsideNil: Bool, outsideBad: Bool) {
     requires phase == Ready
-    requires everyCheckCanPass()
+    requires programRuns()
     phase = InLoop
     loopPointer = pointerValue(entryPointer, outsideNil, NonNil)
     loopSecond = secondValue(entrySecond, outsideBad, GoodValue)
@@ -340,7 +304,7 @@ spec Pairing {
   terminal {
     phase == Returned
     or phase == Aborted
-    or (phase == Ready and not everyCheckCanPass())
+    or (phase == Ready and not programRuns())
   }
 
   // --- what is proved -------------------------------------------------------------
@@ -383,15 +347,7 @@ spec Pairing {
     and (value == BadOutside => operand == SecondOutside)
     and (value == GoodValue => (operand == Good or operand == SecondOutside))
 
-  invariant ProgramShape {
-    entryPointer != KeepsPointer
-    and entryPointer != PointerFromLoop
-    and entrySecond != KeepsSecond
-    and entrySecond != SecondFromLoop
-    and (forall arm: Arm { armPointer[arm] != PointerFromLoop and armSecond[arm] != SecondFromLoop })
-    and (forall edge: Edge { joinPointer[edge] != KeepsPointer and joinSecond[edge] != KeepsSecond })
-    and (phase != Ready => everyCheckCanPass())
-  }
+  invariant ProgramShape { phase != Ready => programRuns() }
   invariant VerdictFixed {
     verdict == reported()
     and witnessEdge == firstEdge()
