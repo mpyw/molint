@@ -4,7 +4,7 @@ Machine-checked statements about the path reasoning in [design/rules.md](../desi
 
 They check the **design**, not the implementation. Each spec models a rule against what happens at run time:
 
-1. `init` picks the program from free choice bits: which operands each edge brings, where the checks are, what escapes. Every program is a start, and it never changes.
+1. `init` leaves the program unset, so it can be any value of its types: which operands each edge brings, where the checks are, what escapes. Every program is a start, and it never changes. Where a type allows a program that cannot occur, a representation-only ASSUME excludes it, and the first action requires it.
 2. The rule is a pure `def` over that program. Its verdict, and the witness below, are fixed before the run starts (in `init`, or by a `judge` action).
 3. The run then takes any branches, and each value from outside is nil or not, freely. The run keeps its own record of each value, such as "holds the nil constant" or "passed a nil check". The rule never reads that record.
 4. The invariants relate the verdict to the run's record.
@@ -123,16 +123,18 @@ The script reads each verdict from `fslc`'s JSON with Python, never from its exi
 
 ## Mutation
 
-`fslc mutate <spec> --depth 8`, measured on fslc 5.1.0:
+`fslc mutate <spec> --depth 8`:
 
-| Spec | Mutants | Killed | Kill rate |
-| --- | --- | --- | --- |
-| `nil_value.fsl` | 200 | 174 | 87% |
-| `pairing.fsl` | 200 | 155 | 77% |
-| `pairing_stores.fsl` | 200 | 170 | 85% |
-| `pairing_load.fsl` | 82 | 74 | 90% |
-| `local_store.fsl` | 141 | 123 | 87% |
-| `result_zero.fsl` | 155 | 128 | 82% |
-| `result_zero_escape.fsl` | 131 | 116 | 89% |
+| Spec | Mutants | Killed | Kill rate | Measured on |
+| --- | --- | --- | --- | --- |
+| `nil_value.fsl` | 200 | 174 | 87% | fslc 5.1.0, with choice bits |
+| `pairing.fsl` | 200 | 155 | 77% | fslc 5.1.0, with choice bits |
+| `pairing_stores.fsl` | 200 | 170 | 85% | fslc 5.1.0, with choice bits |
+| `pairing_load.fsl` | 104 | 99 | 95% | fslc 5.3.0 |
+| `local_store.fsl` | 114 | 104 | 91% | fslc 5.3.0 |
+| `result_zero.fsl` | 132 | 119 | 90% | fslc 5.3.0 |
+| `result_zero_escape.fsl` | 131 | 116 | 89% | fslc 5.1.0, with choice bits |
 
-Most survivors change which free choice bit picks an operand, or the bounds of the bit index. Both leave the set of programs the same. The rest touch state the run writes before it reads, the `abort` action of a run whose checks all fail, or a ghost that only the auxiliary invariants read. In `result_zero_escape.fsl`, a read of the store's zero is also told by `fromStore`, so a run that drops a step's write of `rValue`, or of `addressOut` after the store, survives too.
+The specs used to pick the program from free choice bits, and most survivors then changed which bit picked an operand, or the bounds of the bit index. Rows measured with choice bits still count those mutants. The specs no longer have them: on `result_zero.fsl`, the rewrite removed 19 such survivors and no other. Those rows were not measured again because a full run on the larger specs takes a day or more.
+
+The survivors left touch state the run writes before it reads, the `abort` action of a run whose checks all fail, or a ghost that only the auxiliary invariants read. In `result_zero_escape.fsl`, a read of the store's zero is also told by `fromStore`, so a run that drops a step's write of `rValue`, or of `addressOut` after the store, survives too.
