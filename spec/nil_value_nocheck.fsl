@@ -26,16 +26,13 @@ spec NilValueNoCheck {
   enum Phase { Ready, InLoop, AtJoin, Returned, Aborted }
   type Edge = 0..2
   type RoundCount = 0..4
-  type ChoiceBit = 0..28
   // A slot of the forward runs. Slots 0 to 3 have every f() non-nil, and 4
   // to 7 have every f() nil. Each slot is the run after 0 to 3 rounds.
   type ForwardSlot = 0..7
 
   state {
     phase: Phase,
-    // free choice bits that pick the program in init
-    choice: Map<ChoiceBit, Bool>,
-    // the program
+    // the program. init leaves it unset, so it can be any program.
     entryA: Operand,
     entryB: Operand,
     backA: Operand,
@@ -62,39 +59,10 @@ spec NilValueNoCheck {
     onWitness: Bool
   }
 
-  // An entry operand: nil, &T{} or f().
-  def pickEntryOperand(bit: ChoiceBit) =
-    if choice[bit] then Nil
-    else if choice[bit + 1] then NonNilLiteral
-    else Outside
-  // Any operand.
-  def pickOperand(bit: ChoiceBit) =
-    if choice[bit] then
-      if choice[bit + 1] then Nil
-      else NonNilLiteral
-    else if choice[bit + 1] then
-      if choice[bit + 2] then Outside
-      else PhiA
-    else PhiB
-  def pickCheck(bit: ChoiceBit) =
-    if choice[bit] then NoCheck
-    else if choice[bit + 1] then IsNil
-    else NotNil
-
-  // init chooses the program from free choice bits. So every program is a
-  // start, and nothing changes it afterwards.
+  // init leaves the program unset. So every program is a start, and
+  // nothing changes it afterwards.
   init {
     phase = Ready
-    entryA = pickEntryOperand(0)
-    entryB = pickEntryOperand(2)
-    backA = pickOperand(4)
-    backB = pickOperand(7)
-    checkA = pickCheck(10)
-    checkB = pickCheck(12)
-    forall edge: Edge {
-      joinOperand[edge] = pickOperand(14 + 3 * edge)
-      joinCheck[edge] = pickCheck(23 + 2 * edge)
-    }
     valueA = NonNil
     valueB = NonNil
     rounds = 0
@@ -194,13 +162,17 @@ spec NilValueNoCheck {
   def checkCanPass(check: Check, operand: Operand) =
     (check == IsNil => operandMayBeNil(operand))
     and (check == NotNil => operandMayBeNonNil(operand))
-  def entryOperandsValid() =
-    (entryA == Nil or entryA == NonNilLiteral or entryA == Outside)
-    and (entryB == Nil or entryB == NonNilLiteral or entryB == Outside)
   def everyCheckCanPass() =
     checkCanPass(checkA, backA)
     and checkCanPass(checkB, backB)
     and (forall edge: Edge { checkCanPass(joinCheck[edge], joinOperand[edge]) })
+
+  // --- ASSUME-5: an entry operand is never a or b ---------------------------------
+
+  def entryOperandsValid() =
+    (entryA == Nil or entryA == NonNilLiteral or entryA == Outside)
+    and (entryB == Nil or entryB == NonNilLiteral or entryB == Outside)
+  def programRuns() = entryOperandsValid() and everyCheckCanPass()
 
   // --- the run's semantics --------------------------------------------------------
 
@@ -293,7 +265,7 @@ spec NilValueNoCheck {
 
   action enter(outsideNilA: Bool, outsideNilB: Bool) {
     requires phase == Ready
-    requires everyCheckCanPass()
+    requires programRuns()
     requires not provedReported()
     phase = InLoop
     valueA = operandValue(entryA, outsideNilA, valueA, valueB)
@@ -336,11 +308,11 @@ spec NilValueNoCheck {
     onWitness = false
   }
 
-  // A program outside ASSUME-2 never runs.
+  // A program outside ASSUME-2 or ASSUME-5 never runs.
   terminal {
     phase == Returned
     or phase == Aborted
-    or (phase == Ready and not everyCheckCanPass())
+    or (phase == Ready and not programRuns())
   }
 
   // --- what holds, and the claim that breaks --------------------------------------
